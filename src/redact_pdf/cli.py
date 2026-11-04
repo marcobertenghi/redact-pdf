@@ -249,7 +249,7 @@ def _print_box_report(report: BoxReport) -> None:
     if report.metadata:
         print(f"  metadata removed: {report.metadata.summary()}")
     if not report.total:
-        print("  WARNING no boxes found: draw opaque, filled shapes over what should go")
+        print("  WARNING no boxes found: highlight, draw or box what should go, then save")
     for page, n in sorted(report.ignored.items()):
         print(
             f"  WARNING page {page}: {n} shape(s) over text or images that do not hide them "

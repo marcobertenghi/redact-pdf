@@ -37,7 +37,7 @@ Drawing a black rectangle over text in a PDF editor usually **does not remove it
 - **Batch mode**: redact a whole directory in one call
 - **Self-check**: re-scans the output, including text outside the pages, and exits non-zero if anything remains
 - **Review helper**: lists pages containing images, which need a manual look
-- **Apply manual boxes**: boxes drawn by hand (Xournal++ or any PDF viewer) become real redactions, without turning pages into images
+- **Apply manual boxes**: marks drawn by hand (in Firefox or any PDF viewer) become real redactions, without turning pages into images
 - **Flatten**: alternatively, burn everything into images
 - **No OCR, no cloud, no external tools**: runs locally, single Python dependency
 - **Usable as a library** with a typed Python API
@@ -171,20 +171,20 @@ redact-pdf apply-boxes reviewed.pdf          # -> reviewed_FINAL.pdf
 redact-pdf apply-boxes reviewed.pdf final.pdf
 ```
 
-Boxes drawn in Xournal++ or a PDF viewer only *cover* content; the text, image pixels and drawings underneath stay in the file. `apply-boxes` deletes what is under each box, like `redact` does for matched text. Pages are not turned into images, so the rest of the text stays searchable and the file stays small: a 23-page document with 9 boxes went from 387 KB to 392 KB, where `flatten` produced 7.1 MB.
+Marks drawn in a PDF viewer such as Firefox only *cover* content; the text, image pixels and drawings underneath stay in the file. `apply-boxes` deletes what is under each box, like `redact` does for matched text. Pages are not turned into images, so the rest of the text stays searchable and the file stays small: a 23-page document with 9 boxes went from 387 KB to 392 KB, where `flatten` produced 7.1 MB.
 
 ```console
 $ redact-pdf apply-boxes reviewed.pdf
 reviewed_FINAL.pdf: 3 box(es) applied
-  drawn boxes, pages: 1 (2), 2 (1)
+  annotation boxes, pages: 1 (2), 2 (1)
   metadata removed: document info x1
 ```
 
 What counts as a box:
 
-| Drawn into the page (Xournal++) | Annotations (PDF viewers) |
+| Annotations (Firefox, Okular, Acrobat) | Drawn into the page (e.g. Xournal++ exports) |
 | --- | --- |
-| Opaque, filled shapes of any colour, including white "whiteout" boxes, that lie over text, images or drawings. A shape that is not a rectangle is applied as its bounding rectangle. | Rectangles, circles, polygons, freehand ink, highlights, strike-outs and redaction marks. Highlights remove exactly the highlighted text; freehand drawing (for example Firefox's draw tool) removes a rectangle around each stroke, so keep one short blot per item. |
+| Highlights, freehand drawing, rectangles, circles, polygons, strike-outs and redaction marks, in any colour and opacity. Highlights remove exactly the highlighted text; freehand drawing removes a rectangle around each stroke, as wide as the pen. | Opaque, filled shapes of any colour, including white "whiteout" boxes, that lie over text, images or drawings. A shape that is not a rectangle is applied as its bounding rectangle. |
 
 Filled design elements are left alone: a black header bar with white text on it covers nothing, so it is not a box. Comments and form fields are merged into the page, and metadata is removed as in `redact`.
 
@@ -249,21 +249,21 @@ Automatic redaction only finds text that exists *as text* in the PDF. Text insid
 
 2. **Review the flagged pages** in `in_REDACTED.pdf`. Look for text inside images, and for variants missing from your list: initials, nicknames, misspellings, email handles. Add those to `terms.txt` and run step 1 again; that's faster than fixing them by hand.
 
-3. **Cover what's left by hand.** On Linux, [Xournal++](https://xournalpp.github.io/) is lightweight and works well:
-   ```bash
-   sudo apt install xournalpp   # Debian, Ubuntu, Kali
-   ```
-   One-time setup: select the **Draw Rectangle** tool, enable *Tools → Pen Options → Fill*, set *Tools → Pen Options → Fill Opacity* to **100%** (otherwise boxes are see-through), and choose black. Draw your boxes, then *File → Export as PDF* to `reviewed.pdf`. Rectangles or highlights added in any PDF viewer (Okular, Acrobat, Firefox) work too.
+3. **Mark what's left in Firefox.** Open `in_REDACTED.pdf` in Firefox; its built-in PDF viewer has the tools you need, top right:
+   - **Highlight** for text: select the words. Exactly the highlighted characters are removed, nothing next to them.
+   - **Draw** for images, signatures and scans: set *Thickness* to the maximum and scribble a short blot over each item. Each stroke removes a rectangle around it, as wide as the pen, so gaps inside a blot are covered too. Use one blot per item; a single long stroke across the page removes everything in its rectangle.
 
-4. **Apply the boxes.** This step is required after step 3: Xournal++ and PDF viewers only draw *on top* of the original, which is still intact underneath.
+   Colour and opacity don't matter; every mark is applied and becomes a black box. Save with **Save** (Ctrl+S) as `reviewed.pdf`. Don't use *Print → Save to PDF*: it turns highlights into see-through drawings that `apply-boxes` cannot use.
+
+   Other tools work too: annotations from Okular or Acrobat, or filled boxes drawn into the page and exported, e.g. from Xournal++ with fill opacity at 100%.
+
+4. **Apply the boxes.** This step is required after step 3: Firefox and other viewers only draw *on top* of the original, which is still intact underneath.
    ```bash
    redact-pdf apply-boxes reviewed.pdf     # -> reviewed_FINAL.pdf
    ```
-   If it warns about shapes that do not hide text, fix those boxes and export again.
+   If it warns that it found no boxes, check that you saved the file with your marks. If it warns about shapes that do not hide text, redraw them and save again.
 
 5. **Check the result.** Run `redact-pdf verify` on the final file. Open it, select all text on a page and paste it somewhere to confirm nothing unexpected comes along.
-
-If you used Xournal++, delete the `.xopp` project file it may have saved; it references your original document.
 
 ## Limitations
 
