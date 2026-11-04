@@ -1,6 +1,6 @@
 [project]
 name = "redact-pdf"
-version = "0.2.0"
+version = "0.3.0"
 description = "True redaction of known strings and patterns in PDFs, with a workflow for manual review."
 readme = "README.md"
 license = "AGPL-3.0-or-later"
@@ -31,7 +31,7 @@ redact-pdf = "redact_pdf.cli:main"
 dev = ["pytest>=8", "pytest-cov>=5", "ruff>=0.6", "mypy>=1.10"]
 
 [build-system]
-requires = ["uv_build>=0.8.0,<0.12"]
+requires = ["uv_build>=0.8.0,<0.14"]
 build-backend = "uv_build"
 
 [tool.ruff]
