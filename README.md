@@ -37,7 +37,8 @@ Drawing a black rectangle over text in a PDF editor usually **does not remove it
 - **Batch mode**: redact a whole directory in one call
 - **Self-check**: re-scans the output, including text outside the pages, and exits non-zero if anything remains
 - **Review helper**: lists pages containing images, which need a manual look
-- **Flatten**: burn in boxes drawn by hand in any PDF annotator
+- **Apply manual boxes**: boxes drawn by hand (Xournal++ or any PDF viewer) become real redactions, without turning pages into images
+- **Flatten**: alternatively, burn everything into images
 - **No OCR, no cloud, no external tools**: runs locally, single Python dependency
 - **Usable as a library** with a typed Python API
 
@@ -163,6 +164,34 @@ redact-pdf verify in_REDACTED.pdf -f terms.txt
 
 Searches the text of every page and lists any remaining matches, including email addresses unless `--no-email` is given. Text strings outside the pages (metadata, bookmarks, layer names, link targets and so on) are checked too and listed as `outside page text`. Useful after manual edits or on files redacted with other tools.
 
+### `apply-boxes`: make manual boxes real
+
+```bash
+redact-pdf apply-boxes reviewed.pdf          # -> reviewed_FINAL.pdf
+redact-pdf apply-boxes reviewed.pdf final.pdf
+```
+
+Boxes drawn in Xournal++ or a PDF viewer only *cover* content; the text, image pixels and drawings underneath stay in the file. `apply-boxes` deletes what is under each box, like `redact` does for matched text. Pages are not turned into images, so the rest of the text stays searchable and the file stays small: a 23-page document with 9 boxes went from 387 KB to 392 KB, where `flatten` produced 7.1 MB.
+
+```console
+$ redact-pdf apply-boxes reviewed.pdf
+reviewed_FINAL.pdf: 3 box(es) applied
+  drawn boxes, pages: 1 (2), 2 (1)
+  metadata removed: document info x1
+```
+
+What counts as a box:
+
+| Drawn into the page (Xournal++) | Annotations (PDF viewers) |
+| --- | --- |
+| Opaque, filled shapes of any colour, including white "whiteout" boxes, that lie over text, images or drawings. A shape that is not a rectangle is applied as its bounding rectangle. | Rectangles, circles, polygons, freehand ink, highlights, strike-outs and redaction marks. Highlights remove exactly the highlighted text; freehand drawing (for example Firefox's draw tool) removes a rectangle around each stroke, so keep one short blot per item. |
+
+Filled design elements are left alone: a black header bar with white text on it covers nothing, so it is not a box. Comments and form fields are merged into the page, and metadata is removed as in `redact`.
+
+`apply-boxes` exits with code 1 and a warning when it finds no boxes, or when something lies over text without hiding it: a see-through fill, the highlighter or a pen scribble. Such marks look like redactions on screen but leave the text readable and copyable; redraw them as filled boxes.
+
+A drawing such as a signature is deleted when it lies mostly under a box. A longer drawing that only passes through a box, such as a table border, is kept so the page doesn't lose its lines; the part under the box stays in the file.
+
 ### `flatten`: burn in manual edits
 
 ```bash
@@ -170,14 +199,14 @@ redact-pdf flatten reviewed.pdf          # -> reviewed_FLATTENED.pdf
 redact-pdf flatten reviewed.pdf final.pdf --dpi 300
 ```
 
-Renders every page, including annotations, to an image. Nothing hidden survives, but the result is no longer text-searchable and is larger.
+Renders every page, including annotations, to an image. Nothing hidden survives, but the result is no longer text-searchable and much larger. Prefer `apply-boxes`; use `flatten` if you need every page as a plain image, for example for scans.
 
 ### Exit codes
 
 | Code | Meaning |
 | --- | --- |
 | `0` | Success; output is clean |
-| `1` | Matches remain in the output (or in the file passed to `verify`) |
+| `1` | Matches remain in the output (or in the file passed to `verify`); for `apply-boxes`: no boxes found, text left under a box, or a mark that does not hide text |
 | `2` | Error, e.g. missing file, encrypted PDF, invalid arguments |
 
 This makes the tool easy to use in scripts and CI pipelines.
@@ -224,14 +253,15 @@ Automatic redaction only finds text that exists *as text* in the PDF. Text insid
    ```bash
    sudo apt install xournalpp   # Debian, Ubuntu, Kali
    ```
-   One-time setup: select the **Draw Rectangle** tool, enable *Tools → Pen Options → Fill*, set *Tools → Pen Options → Fill Opacity* to **100%** (otherwise boxes are see-through), and choose black. Draw your boxes, then *File → Export as PDF* to `reviewed.pdf`.
+   One-time setup: select the **Draw Rectangle** tool, enable *Tools → Pen Options → Fill*, set *Tools → Pen Options → Fill Opacity* to **100%** (otherwise boxes are see-through), and choose black. Draw your boxes, then *File → Export as PDF* to `reviewed.pdf`. Rectangles or highlights added in any PDF viewer (Okular, Acrobat, Firefox) work too.
 
-4. **Flatten.** This step is required after step 3: Xournal++ and similar tools only draw *on top* of the original, which is still intact underneath.
+4. **Apply the boxes.** This step is required after step 3: Xournal++ and PDF viewers only draw *on top* of the original, which is still intact underneath.
    ```bash
-   redact-pdf flatten reviewed.pdf     # -> reviewed_FLATTENED.pdf
+   redact-pdf apply-boxes reviewed.pdf     # -> reviewed_FINAL.pdf
    ```
+   If it warns about shapes that do not hide text, fix those boxes and export again.
 
-5. **Check the result.** Run `redact-pdf verify` on unflattened files. Open the final file, select all text on a page and paste it somewhere to confirm nothing unexpected comes along.
+5. **Check the result.** Run `redact-pdf verify` on the final file. Open it, select all text on a page and paste it somewhere to confirm nothing unexpected comes along.
 
 If you used Xournal++, delete the `.xopp` project file it may have saved; it references your original document.
 
@@ -264,6 +294,7 @@ Project layout:
 redact-pdf/
 ├── src/redact_pdf/
 │   ├── core.py        # redaction, verification and flattening
+│   ├── boxes.py       # apply-boxes: manual boxes become real redactions
 │   ├── matching.py    # finding terms by character position, email domains
 │   ├── names.py       # person names taken from email addresses
 │   ├── pdfstrings.py  # text outside the page content: string objects, marked content

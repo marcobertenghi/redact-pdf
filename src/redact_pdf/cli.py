@@ -1,4 +1,4 @@
-"""Command-line interface: ``redact-pdf {redact,verify,flatten}``."""
+"""Command-line interface: ``redact-pdf {redact,verify,apply-boxes,flatten}``."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from redact_pdf import __version__
+from redact_pdf.boxes import APPLIED_SUFFIX, BoxReport, apply_boxes
 from redact_pdf.core import (
     DEFAULT_LABEL,
     DOCUMENT_LEVEL,
@@ -104,6 +105,25 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("input", type=Path, help="PDF file to check")
     _add_match_args(p)
     p.add_argument("--label", default=DEFAULT_LABEL, help="label used during redaction")
+
+    p = sub.add_parser(
+        "apply-boxes",
+        help="turn boxes drawn during review into real redactions",
+        description=(
+            "Delete the text, image pixels and drawings under boxes drawn during manual "
+            "review (filled shapes, e.g. from Xournal++, or annotations from a PDF viewer). "
+            "Pages are not converted to images. "
+            f"OUTPUT defaults to <input>{APPLIED_SUFFIX}.pdf."
+        ),
+    )
+    p.add_argument("input", type=Path, help="the reviewed PDF")
+    p.add_argument(
+        "output", type=Path, nargs="?",
+        help=f"output PDF file (default: <input>{APPLIED_SUFFIX}.pdf)",
+    )  # fmt: skip
+    p.add_argument(
+        "--no-scrub", action="store_true", help="keep links, attachments, scripts and hidden text"
+    )
 
     p = sub.add_parser("flatten", help="burn in manual boxes by converting pages to images")
     p.add_argument("input", type=Path, help="PDF file to flatten")
@@ -216,7 +236,41 @@ def _cmd_flatten(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
-COMMANDS = {"redact": _cmd_redact, "verify": _cmd_verify, "flatten": _cmd_flatten}
+def _pages(counts: dict[int, int]) -> str:
+    return ", ".join(f"{page} ({n})" for page, n in sorted(counts.items()))
+
+
+def _print_box_report(report: BoxReport) -> None:
+    print(f"{report.output}: {report.total} box(es) applied")
+    if report.drawn:
+        print(f"  drawn boxes, pages: {_pages(report.drawn)}")
+    if report.annotations:
+        print(f"  annotation boxes, pages: {_pages(report.annotations)}")
+    if report.metadata:
+        print(f"  metadata removed: {report.metadata.summary()}")
+    if not report.total:
+        print("  WARNING no boxes found: draw opaque, filled shapes over what should go")
+    for page, n in sorted(report.ignored.items()):
+        print(
+            f"  WARNING page {page}: {n} shape(s) over text or images that do not hide them "
+            "(see-through fill, highlighter or pen); not applied"
+        )
+    for page, n in sorted(report.leftovers.items()):
+        print(f"  WARNING page {page}: text still under {n} box(es)")
+
+
+def _cmd_apply_boxes(args: argparse.Namespace) -> int:
+    report = apply_boxes(args.input, args.output, scrub=not args.no_scrub)
+    _print_box_report(report)
+    return EXIT_OK if report.is_clean else EXIT_LEFTOVERS
+
+
+COMMANDS = {
+    "redact": _cmd_redact,
+    "verify": _cmd_verify,
+    "apply-boxes": _cmd_apply_boxes,
+    "flatten": _cmd_flatten,
+}
 
 
 def main(argv: Sequence[str] | None = None) -> int:

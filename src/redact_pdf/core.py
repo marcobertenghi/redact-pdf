@@ -7,7 +7,8 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Iterable, Sequence
+from collections import Counter
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -252,22 +253,10 @@ def redact_pdf(
         data = doc.tobytes(garbage=4, deflate=True)
 
     replacement = label or "***"
-    with pymupdf.open("pdf", data) as doc:
-        if scrub:
-            # Metadata is handled more thoroughly by strip_metadata().
-            doc.scrub(metadata=False, xml_metadata=False)
-        report.metadata = strip_metadata(doc)
-        if n := strip_marked_content_text(doc):
-            report.metadata.removed["alternate text in page content"] += n
-        # Drop what scrubbing and the tag removal orphaned, so only strings
-        # that end up in the output are rewritten and reported.
-        data = doc.tobytes(garbage=4, deflate=True)
-
-    with pymupdf.open("pdf", data) as doc:
-        hidden = redact_object_strings(doc, lambda s: redact_text(s, matchers, replacement))
-        report.hidden_text = dict(hidden)
-        # Full rewrite (not incremental) so no earlier revision survives in the file.
-        doc.save(dst, garbage=4, deflate=True, clean=True)
+    report.metadata, hidden = clean_and_save(
+        data, dst, scrub=scrub, strings=lambda s: redact_text(s, matchers, replacement)
+    )
+    report.hidden_text = dict(hidden)
 
     logger.info("Wrote %s with %d redaction(s)", dst, report.total)
     report.leftovers = _verify(dst, matchers, label)
@@ -297,6 +286,40 @@ def _domain_terms(text: str) -> dict[str, str]:
         if (term := email_domain_term(m.group(0))) is not None:
             terms.setdefault(term, m.group(0))
     return terms
+
+
+def clean_and_save(
+    data: bytes,
+    dst: Path,
+    *,
+    scrub: bool,
+    strings: Callable[[str], tuple[str, Counter[str]]] | None = None,
+) -> tuple[MetadataReport, Counter[str]]:
+    """Remove hidden content and metadata from a serialised PDF and save it.
+
+    Runs ``scrub`` (links, attachments, scripts...), :func:`strip_metadata`
+    and removes alternate text in page content. ``strings``, if given,
+    rewrites text strings outside the pages. The file is fully rewritten, so
+    no earlier revision survives. Returns what was removed and the string
+    matches.
+    """
+    with pymupdf.open("pdf", data) as doc:
+        if scrub:
+            # Metadata is handled more thoroughly by strip_metadata().
+            doc.scrub(metadata=False, xml_metadata=False)
+        metadata = strip_metadata(doc)
+        if n := strip_marked_content_text(doc):
+            metadata.removed["alternate text in page content"] += n
+        # Drop what scrubbing and the tag removal orphaned, so only strings
+        # that end up in the output are rewritten and reported.
+        data = doc.tobytes(garbage=4, deflate=True)
+
+    hidden: Counter[str] = Counter()
+    with pymupdf.open("pdf", data) as doc:
+        if strings is not None:
+            hidden = redact_object_strings(doc, strings)
+        doc.save(dst, garbage=4, deflate=True, clean=True)
+    return metadata, hidden
 
 
 def _redact_outline(doc: pymupdf.Document, matchers: Sequence[Matcher], label: str | None) -> int:
