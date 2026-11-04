@@ -130,9 +130,12 @@ def whole_word(body: str) -> str:
     return rf"(?<![^\W_])(?<![\u0300-\u036f]){body}(?![^\W_]|[\u0300-\u036f])"
 
 
-def term_matcher(term: str, *, whole_word_only: bool = False) -> Matcher:
-    """Case-insensitive literal match. Any whitespace in ``term`` also matches
-    line breaks and repeated spaces, so "John Smith" is found across lines."""
+def term_matcher(term: str, *, whole_word_only: bool = True) -> Matcher:
+    """Case-insensitive literal match, bounded by whole words by default.
+
+    Any whitespace in ``term`` also matches line breaks and repeated spaces,
+    so "John Smith" is found across lines.
+    """
     term = unicodedata.normalize("NFC", term)
     body = r"\s+".join(map(_literal, term.split()))
     if whole_word_only:

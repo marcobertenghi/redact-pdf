@@ -188,7 +188,7 @@ def redact_pdf(
     Args:
         input_path: Source PDF. Never modified.
         output_path: Destination PDF. Defaults to ``<input>_REDACTED.pdf``.
-        terms: Literal strings to remove (case-insensitive).
+        terms: Literal strings to remove as whole words (case-insensitive).
         patterns: Regular expressions to remove, applied as written (use
             ``(?i)`` for case-insensitive matching).
         emails: Also remove email addresses (on by default).

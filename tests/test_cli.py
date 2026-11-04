@@ -41,6 +41,26 @@ def test_terms_file(sample_pdf: Path, tmp_path: Path) -> None:
     assert "ACME" not in page_text(out)
 
 
+@pytest.mark.parametrize("from_file", [False, True], ids=["term-option", "terms-file"])
+def test_literal_terms_match_whole_words(tmp_path: Path, from_file: bool) -> None:
+    src = tmp_path / "in.pdf"
+    with pymupdf.open() as doc:
+        page = doc.new_page()
+        page.insert_text((72, 72), "ETH methodology Whether")
+        doc.save(src)
+    args = ["-t", "ETH"]
+    if from_file:
+        terms = tmp_path / "terms.txt"
+        terms.write_text("ETH\n", encoding="utf-8")
+        args = ["-f", str(terms)]
+    out = tmp_path / "out.pdf"
+    assert main(["verify", str(src), *args, "--no-email"]) == EXIT_LEFTOVERS
+    assert main(["redact", str(src), str(out), *args, "--no-email"]) == EXIT_OK
+    assert "methodology Whether" in page_text(out)
+    assert "ETH" not in page_text(out)
+    assert main(["verify", str(out), *args, "--no-email"]) == EXIT_OK
+
+
 def test_batch_directory(sample_pdf: Path, tmp_path: Path) -> None:
     out_dir = tmp_path / "redacted"
     code = main(["redact", str(sample_pdf.parent), str(out_dir), "-t", "John Smith"])

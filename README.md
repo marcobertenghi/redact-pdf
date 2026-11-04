@@ -106,7 +106,7 @@ redact-pdf redact ./documents ./redacted -f terms.txt
 | Option | Description |
 | --- | --- |
 | `OUTPUT` | Optional. File or directory. Default: `<input>_REDACTED.pdf` next to the input. |
-| `-t, --term TEXT` | Literal text to match, case-insensitive. Repeatable. |
+| `-t, --term TEXT` | Literal text to match as whole words, case-insensitive. Repeatable. |
 | `-f, --terms-file FILE` | One term per line; lines starting with `#` are ignored. |
 | `-r, --regex PATTERN` | Regular expression to match. Repeatable. |
 | `--no-email` | Don't redact email addresses (they are redacted by default). |
@@ -117,9 +117,11 @@ redact-pdf redact ./documents ./redacted -f terms.txt
 | `--keep-annotations` | Keep comments and form fields interactive (see below). |
 | `--no-scrub` | Keep links, attachments, scripts and hidden text. |
 
-Terms are matched case-insensitively, for accented letters too (`Müller` also finds `MÜLLER`). Accented letters match however the PDF stores them: `ö` as one character or as `o` plus a combining accent, which looks identical but is different text. A space in a term matches any whitespace, including a line break, and words hyphenated at the end of a line are found (`Mül-` / `ler`). Terms also match inside longer words, so `Smith` removes `Smithson` as well; listing both `John Smith` and `Smith` works as expected.
+Terms are matched case-insensitively, for accented letters too (`Müller` also finds `MÜLLER`). Accented letters match however the PDF stores them: `ö` as one character or as `o` plus a combining accent, which looks identical but is different text. A space in a term matches any whitespace, including a line break, and words hyphenated at the end of a line are found (`Mül-` / `ler`). Terms match as **whole words**: `-t "ETH"` removes "ETH", "eth" and "ETH-Zurich", but leaves "methodology", "Whether" and "ethz" intact. Letters, digits and combining accents prevent a word boundary; punctuation and underscores separate words. This applies to `-t`, term files and `verify`, including text outside the pages. Listing both `John Smith` and `Smith` works as expected.
 
 Regular expressions are applied as written: they are case-sensitive unless you add `(?i)`, and `\b` word boundaries are respected (`-r "\bAnn\b"` leaves "Annual" alone).
+
+For intentional matching inside longer words, use a regular expression: `-r "(?i)Smith"` also removes the "Smith" in "Smithson".
 
 The input file is never modified; an existing output file is overwritten. In batch mode, files already ending in `_REDACTED` are skipped, so running the same command twice is safe.
 

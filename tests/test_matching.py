@@ -79,10 +79,53 @@ def test_hyphenated_term_across_lines(tmp_path: Path, spacing: int) -> None:
 
 
 def test_neighbouring_text_survives(tmp_path: Path) -> None:
-    src = make_pdf(tmp_path / "in.pdf", ["xJohn Smithx and more"])
+    src = make_pdf(tmp_path / "in.pdf", ["xJohn Smithx and John Smith, more"])
     out = tmp_path / "out.pdf"
-    redact_pdf(src, out, ["John Smith"], emails=False, label=None)
-    assert "and more" in page_text(out)
+    report = redact_pdf(src, out, ["John Smith"], emails=False, label=None)
+    assert report.hits[1] == {"John Smith": 1}
+    assert "xJohn Smithx and" in page_text(out)
+    assert "more" in page_text(out)
+
+
+def test_literal_terms_leave_longer_words_intact(tmp_path: Path) -> None:
+    src = make_pdf(
+        tmp_path / "in.pdf",
+        ["ETH eth Eth ETH-Zurich (ETH), _ETH_", "methodology Whether ethz ETH2 2ETH"],
+    )
+    out = tmp_path / "out.pdf"
+    report = redact_pdf(src, out, ["ETH"], emails=False, label=None)
+    assert report.hits[1] == {"ETH": 6}
+    assert "methodology Whether ethz ETH2 2ETH" in page_text(out)
+    assert "Zurich" in page_text(out)
+    assert report.is_clean
+    assert verify_pdf(out, ["ETH"], emails=False) == {}
+
+
+def test_whole_word_matching_outside_pages(tmp_path: Path) -> None:
+    src = make_pdf(tmp_path / "in.pdf", ["methodology Whether"])
+    with pymupdf.open(src) as doc:
+        doc.set_toc([[1, "ETH: methodology Whether", 1]])
+        doc.add_ocg("ETH methodology Whether")
+        doc.saveIncr()
+    out = tmp_path / "out.pdf"
+    assert verify_pdf(src, ["ETH"], emails=False) == {0: ["ETH"]}
+    report = redact_pdf(src, out, ["ETH"], emails=False)
+    assert report.hits == {}
+    assert report.bookmarks == 1
+    with pymupdf.open(out) as doc:
+        assert doc.get_toc()[0][1] == "REDACTED: methodology Whether"
+        assert next(iter(doc.get_ocgs().values()))["name"] == "REDACTED methodology Whether"
+    assert report.is_clean
+
+
+def test_regex_can_still_match_inside_words(tmp_path: Path) -> None:
+    src = make_pdf(tmp_path / "in.pdf", ["methodology Whether ETH"])
+    out = tmp_path / "out.pdf"
+    report = redact_pdf(src, out, patterns=[r"(?i)eth"], emails=False, label=None)
+    assert sum(report.hits[1].values()) == 3
+    assert "methodology" not in page_text(out)
+    assert "Whether" not in page_text(out)
+    assert report.is_clean
 
 
 def test_overlapping_matches_are_counted_once(tmp_path: Path) -> None:
@@ -102,9 +145,14 @@ def test_redact_text_does_not_nest_labels() -> None:
 
 
 def test_whole_word_term() -> None:
-    m = term_matcher("acme", whole_word_only=True)
+    m = term_matcher("acme")
     found = [x.group(0) for x in m.pattern.finditer("www.acme.com ACME-Group acmeplex _acme_")]
     assert found == ["acme", "ACME", "acme"]
+
+
+@pytest.mark.parametrize("text", ["éETH", "ETHé", "e\u0308ETH", "ETH\u0308"])
+def test_term_boundaries_include_unicode_letters_and_accents(text: str) -> None:
+    assert term_matcher("ETH").pattern.search(text) is None
 
 
 @pytest.mark.parametrize(

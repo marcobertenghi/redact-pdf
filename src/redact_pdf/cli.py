@@ -41,7 +41,7 @@ def _add_match_args(parser: argparse.ArgumentParser) -> None:
     group = parser.add_argument_group("what to match")
     group.add_argument(
         "-t", "--term", action="append", default=[], metavar="TEXT",
-        help="literal text to match, case-insensitive (repeatable)",
+        help="literal text to match as whole words, case-insensitive (repeatable)",
     )  # fmt: skip
     group.add_argument(
         "-f", "--terms-file", type=Path, metavar="FILE",

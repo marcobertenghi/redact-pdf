@@ -130,7 +130,7 @@ def test_longer_terms_win(sample_pdf: Path, tmp_path: Path) -> None:
 
 def test_term_inside_label_is_not_a_leftover(sample_pdf: Path, tmp_path: Path) -> None:
     # "act" occurs in "REDACTED"; it must not be reported as remaining.
-    report = redact_pdf(sample_pdf, tmp_path / "out.pdf", ["act"])
+    report = redact_pdf(sample_pdf, tmp_path / "out.pdf", patterns=[r"(?i)act"])
     assert report.is_clean
 
 
