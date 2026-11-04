@@ -27,7 +27,7 @@ Drawing a black rectangle over text in a PDF editor usually **does not remove it
 - **True redaction** of literal strings (case-insensitive, including `Ü`/`ü`) and regular expressions
 - **Email addresses removed by default**, no configuration needed
 - **Organisation names from email domains** removed too: `jane@acme.com` also removes "ACME" everywhere in the document
-- **Person names from email addresses** (best effort): `Lukas Körnich <lukas.koernich@acme.ch>` also removes "Lukas" and "Körnich" everywhere in the document
+- **Person names from email addresses** (best effort): `Lukas König <lukas.koenig@acme.ch>` also removes "Lukas" and "Körnich" everywhere in the document
 - **Minimal typing**: `redact-pdf redact file.pdf` writes `file_REDACTED.pdf`
 - **Deep metadata removal**: document info, XMP everywhere, EXIF inside images, private application data, annotation authors, document ID ([details](#metadata-removal))
 - **Comments and form fields** are merged into the page, so their visible text is redacted too
@@ -41,7 +41,6 @@ Drawing a black rectangle over text in a PDF editor usually **does not remove it
 - **Apply manual boxes**: marks drawn by hand (in Firefox or any PDF viewer) become real redactions, without turning pages into images
 - **Flatten**: alternatively, burn everything into images
 - **No OCR, no cloud, no external tools**: runs locally, single Python dependency
-- **Usable as a library** with a typed Python API
 
 ## Installation
 
@@ -140,8 +139,8 @@ Also when emails are redacted, the names belonging to each address are redacted 
 
 | Source | Example | Redacted |
 | --- | --- | --- |
-| Display name next to the address | `Lukas Körnich <lk@acme.ch>`, `"Körnich, Lukas" <…>`, `Alberto Ornaghi (ALoR) <…>` | "Lukas Körnich", "Lukas", "Körnich", exactly as written |
-| Parts of the address | `lukas.koernich@acme.ch` | "lukas koernich", "lukas", "koernich", accent-insensitive: "koernich" also finds "Körnich" and "Kornich" |
+| Display name next to the address | `Lukas König <lk@acme.ch>`, `"König, Lukas" <…>`, `Alberto Ornaghi (ALoR) <…>` | "Lukas König", "Lukas", "König", exactly as written |
+| Parts of the address | `lukas.koenig@acme.ch` | "lukas koenig", "lukas", "koenig", accent-insensitive: "koenig" also finds "König" and "Konig" |
 
 A display name on the line before its address is found too, even across a page break. This is a heuristic, so check the `names from` lines in the report:
 
