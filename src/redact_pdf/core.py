@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pymupdf
 
+from redact_pdf.images import HIDDEN_IMAGE, blank_hidden_image_areas, hidden_image_pages
 from redact_pdf.matching import (
     EMAIL_PATTERN,
     Matcher,
@@ -93,6 +94,8 @@ class RedactionReport:
             email addresses found in the document (see :mod:`redact_pdf.names`).
         metadata: What was removed by :func:`redact_pdf.metadata.strip_metadata`,
             plus alternate text in marked content.
+        hidden_images: Number of images whose areas that no page shows
+            (cropped off, or off the page) were blanked.
     """
 
     output: Path
@@ -104,6 +107,7 @@ class RedactionReport:
     domain_terms: dict[str, str] = field(default_factory=dict)
     name_terms: dict[str, list[str]] = field(default_factory=dict)
     metadata: MetadataReport = field(default_factory=MetadataReport)
+    hidden_images: int = 0
 
     @property
     def total(self) -> int:
@@ -170,8 +174,10 @@ def redact_pdf(
 
     Matched text is deleted from the content stream (not just covered) and
     replaced by a black box containing ``label``. Image pixels under a box are
-    blanked, and matches are also replaced in bookmark titles and other text
-    strings outside the pages (layer names, page labels, link targets).
+    blanked, as are image areas that no page shows (cropped off, or off the
+    page; see :mod:`redact_pdf.images`). Matches are also replaced in
+    bookmark titles and other text strings outside the pages (layer names,
+    page labels, link targets).
     Alternate text that would reveal redacted words and all metadata are
     removed (see :mod:`redact_pdf.metadata`).
 
@@ -248,6 +254,8 @@ def redact_pdf(
                 report.image_pages[page_no] = n_images
 
         report.bookmarks = _redact_outline(doc, matchers, label)
+        # After redaction: a box blanks pixels only in that page's copy of an image.
+        report.hidden_images = blank_hidden_image_areas(doc)
         # Serialise once to drop objects orphaned by baking and redaction, so the
         # passes below only see (and report) what is really in the file.
         data = doc.tobytes(garbage=4, deflate=True)
@@ -366,7 +374,8 @@ def verify_pdf(
     outside the pages (reported under page :data:`DOCUMENT_LEVEL`, 0).
     Email addresses are checked too unless ``emails=False``. Matches inside a
     redaction ``label`` (e.g. a term like "act" inside "REDACTED") are
-    ignored. Text inside images is not checked.
+    ignored. Text inside images is not checked, but images with content in
+    areas no page shows are reported as :data:`HIDDEN_IMAGE` on their pages.
 
     Returns:
         ``{page_number: [matched_text, ...]}``; empty if clean.
@@ -381,6 +390,8 @@ def _verify(path: Path, matchers: Sequence[Matcher], label: str | None) -> dict[
             hits = PageText(page).find(matchers, protect=label)
             if hits:
                 found[page.number + 1] = sorted({name for name, _, _ in hits})
+        for page_no in hidden_image_pages(doc):
+            found.setdefault(page_no, []).append(HIDDEN_IMAGE)
 
         outside = {
             name

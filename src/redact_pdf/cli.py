@@ -166,6 +166,8 @@ def _print_report(report: RedactionReport) -> None:
         print(f"  outside page text: {_counts(report.hidden_text)}")
     if report.metadata:
         print(f"  metadata removed: {report.metadata.summary()}")
+    if report.hidden_images:
+        print(f"  image areas no page shows, blanked: {report.hidden_images} image(s)")
     if report.image_pages:
         pages = ", ".join(f"{p} ({n} img)" for p, n in sorted(report.image_pages.items()))
         print(f"  review manually, pages with images: {pages}")
@@ -222,7 +224,7 @@ def _cmd_verify(args: argparse.Namespace) -> int:
         raise ValueError("Nothing to match: provide terms or patterns, or enable emails.")
     found = verify_pdf(args.input, terms, args.regex, emails=args.emails, label=args.label)
     if not found:
-        print(f"{args.input}: clean (text only; images are not checked)")
+        print(f"{args.input}: clean (text, and image areas no page shows)")
         return EXIT_OK
     print(f"{args.input}: matches remain")
     for page, items in sorted(found.items()):
@@ -248,6 +250,8 @@ def _print_box_report(report: BoxReport) -> None:
         print(f"  annotation boxes, pages: {_pages(report.annotations)}")
     if report.metadata:
         print(f"  metadata removed: {report.metadata.summary()}")
+    if report.hidden_images:
+        print(f"  image areas no page shows, blanked: {report.hidden_images} image(s)")
     if not report.total:
         print("  WARNING no boxes found: highlight, draw or box what should go, then save")
     for page, n in sorted(report.ignored.items()):
@@ -257,6 +261,8 @@ def _print_box_report(report: BoxReport) -> None:
         )
     for page, n in sorted(report.leftovers.items()):
         print(f"  WARNING page {page}: text still under {n} box(es)")
+    for page, n in sorted(report.image_leftovers.items()):
+        print(f"  WARNING page {page}: {n} image(s) still have content no page shows")
 
 
 def _cmd_apply_boxes(args: argparse.Namespace) -> int:

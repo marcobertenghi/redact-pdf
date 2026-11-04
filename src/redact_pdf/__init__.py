@@ -22,6 +22,7 @@ from redact_pdf.core import (
     redact_pdf,
     verify_pdf,
 )
+from redact_pdf.images import HIDDEN_IMAGE, blank_hidden_image_areas, hidden_image_pages
 from redact_pdf.metadata import MetadataReport, strip_jpeg_metadata, strip_metadata
 
 __all__ = [
@@ -30,6 +31,7 @@ __all__ = [
     "DOCUMENT_LEVEL",
     "EMAIL_PATTERN",
     "FLATTENED_SUFFIX",
+    "HIDDEN_IMAGE",
     "REDACTED_SUFFIX",
     "BoxReport",
     "MetadataReport",
@@ -37,8 +39,10 @@ __all__ = [
     "RedactionReport",
     "__version__",
     "apply_boxes",
+    "blank_hidden_image_areas",
     "default_output_path",
     "flatten_pdf",
+    "hidden_image_pages",
     "load_terms",
     "redact_pdf",
     "strip_jpeg_metadata",

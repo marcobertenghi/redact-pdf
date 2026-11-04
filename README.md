@@ -32,6 +32,7 @@ Drawing a black rectangle over text in a PDF editor usually **does not remove it
 - **Deep metadata removal**: document info, XMP everywhere, EXIF inside images, private application data, annotation authors, document ID ([details](#metadata-removal))
 - **Comments and form fields** are merged into the page, so their visible text is redacted too
 - **Text outside the page** is redacted too: bookmarks, layer names, page labels, link targets, alternate text for screen readers
+- **Hidden image areas** are blanked: the parts of an image that no page shows, such as a cropped-off part or the half of a split screenshot stored with the other page ([details](#hidden-image-areas))
 - **Readable output**: black boxes with a configurable label, auto-sized to fit
 - **Term lists**: keep your terms in a file, one per line
 - **Batch mode**: redact a whole directory in one call
@@ -162,7 +163,7 @@ With `--keep-annotations` they stay interactive, and their authors and timestamp
 redact-pdf verify in_REDACTED.pdf -f terms.txt
 ```
 
-Searches the text of every page and lists any remaining matches, including email addresses unless `--no-email` is given. Text strings outside the pages (metadata, bookmarks, layer names, link targets and so on) are checked too and listed as `outside page text`. Useful after manual edits or on files redacted with other tools.
+Searches the text of every page and lists any remaining matches, including email addresses unless `--no-email` is given. Text strings outside the pages (metadata, bookmarks, layer names, link targets and so on) are checked too and listed as `outside page text`. Images that still hold content in areas no page shows are listed as `image content outside the visible page` ([details](#hidden-image-areas)). Useful after manual edits or on files redacted with other tools.
 
 ### `apply-boxes`: make manual boxes real
 
@@ -231,6 +232,14 @@ Metadata is stripped on every `redact` run, directly in Python; no external tool
 
 JPEG images are cleaned losslessly: the compressed image data is copied byte for byte, and only metadata segments are dropped. Colour profiles needed for correct rendering are kept.
 
+### Hidden image areas
+
+A page often shows only part of a stored image. Word, browsers and Confluence crop images by hiding part of them, and a long screenshot split across two pages is usually stored *whole* with each page, each showing its half. The hidden part is still in the file, and any PDF tool can extract it (`pdfimages -all file.pdf`).
+
+This also undermines redaction: a box blanks the pixels under it only in the copy on its own page. A logo blacked out on page 4 stays intact in the copy stored with page 5.
+
+`redact` and `apply-boxes` therefore replace every image area that no page shows with white, including the image's transparency mask, after redacting. What the pages show is unchanged: lossless images are rewritten pixel for pixel, and JPEGs are re-compressed at high quality (differences of a few colour levels at most). Images whose hidden area is already blank are left as they are. `verify` reports images that still hold content in such areas.
+
 **Why not exiftool?** For PDFs, exiftool only knows the document info dictionary and document-level XMP; the other places in the table are invisible to it. Its PDF edits are also incremental: `exiftool -all= file.pdf` appends an update that hides the old values, but leaves them in the file, and exiftool itself warns that deleted tags can be recovered. exiftool is still a handy way to *check* the result:
 
 ```bash
@@ -268,6 +277,7 @@ Automatic redaction only finds text that exists *as text* in the PDF. Text insid
 ## Limitations
 
 - **Text in images is not detected.** There is no OCR by design; use the manual workflow above.
+- **Inline images and stencil masks** (rare; mostly small icons and 1-bit scans) are not checked for hidden areas. `flatten` re-renders everything if you need certainty.
 - **Vector text** (text converted to outlines, common in logos) is not text and is not found.
 - **Exact matches only.** Line breaks, hyphenation and ligatures are handled, but letter-spaced text (`J o h n`) or a name split across table cells can prevent a match. Add fragments (e.g. the surname alone) as extra terms.
 - **Obfuscated emails** such as `name [at] example [dot] com` are not detected; add them as terms or a custom regex.
@@ -295,6 +305,7 @@ redact-pdf/
 ├── src/redact_pdf/
 │   ├── core.py        # redaction, verification and flattening
 │   ├── boxes.py       # apply-boxes: manual boxes become real redactions
+│   ├── images.py      # image areas no page shows (cropped, off the page)
 │   ├── matching.py    # finding terms by character position, email domains
 │   ├── names.py       # person names taken from email addresses
 │   ├── pdfstrings.py  # text outside the page content: string objects, marked content

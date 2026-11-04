@@ -42,6 +42,7 @@ from redact_pdf.core import (
     clean_and_save,
     default_output_path,
 )
+from redact_pdf.images import blank_hidden_image_areas, hidden_image_pages
 from redact_pdf.metadata import MetadataReport
 
 __all__ = ["APPLIED_SUFFIX", "BoxReport", "apply_boxes"]
@@ -81,6 +82,10 @@ class BoxReport:
         leftovers: ``{page_number: count}`` of boxes with text still under
             them after applying. Should be empty.
         metadata: What was removed from the file.
+        hidden_images: Number of images whose areas that no page shows
+            (cropped off, or off the page) were blanked.
+        image_leftovers: ``{page_number: count}`` of images that still have
+            content in such areas after applying. Should be empty.
     """
 
     output: Path
@@ -89,6 +94,8 @@ class BoxReport:
     ignored: dict[int, int] = field(default_factory=dict)
     leftovers: dict[int, int] = field(default_factory=dict)
     metadata: MetadataReport = field(default_factory=MetadataReport)
+    hidden_images: int = 0
+    image_leftovers: dict[int, int] = field(default_factory=dict)
 
     @property
     def total(self) -> int:
@@ -97,9 +104,11 @@ class BoxReport:
 
     @property
     def is_clean(self) -> bool:
-        """True if boxes were applied, nothing remains under them and no
-        box-like shape was ignored."""
-        return self.total > 0 and not self.leftovers and not self.ignored
+        """True if boxes were applied, nothing remains under them, no
+        box-like shape was ignored and no image keeps hidden content."""
+        return (
+            self.total > 0 and not self.leftovers and not self.ignored and not self.image_leftovers
+        )
 
 
 @dataclass(frozen=True)
@@ -125,9 +134,11 @@ def apply_boxes(
     """Delete the content under boxes drawn during manual review.
 
     Text, image pixels and drawings covered by a box are removed from the
-    file and the box stays as a solid area. Remaining annotations and form
-    fields are merged into the page, and hidden content and metadata are
-    removed as in :func:`redact_pdf.redact_pdf`.
+    file and the box stays as a solid area. Image areas that no page shows
+    are blanked too: a screenshot split across two pages is stored whole on
+    both, and a box only blanks the copy on its own page. Remaining
+    annotations and form fields are merged into the page, and hidden content
+    and metadata are removed as in :func:`redact_pdf.redact_pdf`.
 
     Args:
         input_path: The reviewed PDF. Never modified.
@@ -165,10 +176,13 @@ def apply_boxes(
             if marked[page_no]:
                 report.annotations[page_no] = len(marked[page_no])
 
+        report.hidden_images = blank_hidden_image_areas(doc)
         data = doc.tobytes(garbage=4, deflate=True)
 
     report.metadata, _ = clean_and_save(data, dst, scrub=scrub)
     report.leftovers = _check(dst, hidden)
+    with pymupdf.open(dst) as out:
+        report.image_leftovers = hidden_image_pages(out)
     logger.info("Wrote %s with %d box(es) applied", dst, report.total)
     return report
 
@@ -235,7 +249,10 @@ def _painted_rect(drawing: dict[str, Any]) -> pymupdf.Rect:
 
 
 def _overlaps(a: pymupdf.Rect, b: pymupdf.Rect) -> bool:
-    return bool((a & b).get_area() > _MIN_OVERLAP)
+    # Plain arithmetic: called for every pair of drawings, where Rect objects are slow.
+    width = min(a.x1, b.x1) - max(a.x0, b.x0)
+    height = min(a.y1, b.y1) - max(a.y0, b.y0)
+    return width > 0 and height > 0 and width * height > _MIN_OVERLAP
 
 
 def _is_white(color: Sequence[float]) -> bool:
