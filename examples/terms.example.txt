@@ -1,0 +1,6 @@
+# One term per line. Lines starting with # are ignored.
+# Matching is case-insensitive. Longer terms are matched first.
+John Smith
+Smith
+ACME GmbH
+Musterstraße 12

@@ -1,0 +1,211 @@
+"""Command-line interface: ``redact-pdf {redact,verify,flatten}``."""
+
+from __future__ import annotations
+
+import argparse
+import logging
+import re
+import sys
+from collections.abc import Sequence
+from pathlib import Path
+
+from redact_pdf import __version__
+from redact_pdf.core import (
+    DEFAULT_LABEL,
+    FLATTENED_SUFFIX,
+    REDACTED_SUFFIX,
+    RedactionError,
+    RedactionReport,
+    default_output_path,
+    flatten_pdf,
+    load_terms,
+    redact_pdf,
+    verify_pdf,
+)
+
+EXIT_OK = 0
+EXIT_LEFTOVERS = 1
+EXIT_ERROR = 2
+
+
+def _regex(value: str) -> re.Pattern[str]:
+    try:
+        return re.compile(value)
+    except re.error as exc:
+        raise argparse.ArgumentTypeError(f"invalid regex {value!r}: {exc}") from exc
+
+
+def _add_match_args(parser: argparse.ArgumentParser) -> None:
+    group = parser.add_argument_group("what to match")
+    group.add_argument(
+        "-t", "--term", action="append", default=[], metavar="TEXT",
+        help="literal text to match, case-insensitive (repeatable)",
+    )  # fmt: skip
+    group.add_argument(
+        "-f", "--terms-file", type=Path, metavar="FILE",
+        help="file with one term per line; '#' starts a comment",
+    )  # fmt: skip
+    group.add_argument(
+        "-r", "--regex", action="append", default=[], type=_regex, metavar="PATTERN",
+        help="regular expression to match (repeatable)",
+    )  # fmt: skip
+    group.add_argument(
+        "--no-email", dest="emails", action="store_false",
+        help="do not match email addresses (matched by default)",
+    )  # fmt: skip
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="redact-pdf",
+        description="True redaction of known strings and patterns in PDFs.",
+    )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+    parser.add_argument("-v", "--verbose", action="store_true", help="show debug logging")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    p = sub.add_parser(
+        "redact",
+        help="redact matches and write a new PDF",
+        description=(
+            "Redact matches and strip metadata. Email addresses are redacted by default. "
+            f"OUTPUT defaults to <input>{REDACTED_SUFFIX}.pdf next to the input; "
+            "INPUT may be a directory for batch mode."
+        ),
+    )
+    p.add_argument("input", type=Path, help="PDF file or directory of PDFs")
+    p.add_argument(
+        "output", type=Path, nargs="?",
+        help=f"output file or directory (default: <input>{REDACTED_SUFFIX}.pdf)",
+    )  # fmt: skip
+    _add_match_args(p)
+    p.add_argument(
+        "--label", default=DEFAULT_LABEL, help=f"text inside each box (default: {DEFAULT_LABEL})"
+    )
+    p.add_argument("--no-label", action="store_true", help="plain black boxes without text")
+    p.add_argument(
+        "--no-scrub", action="store_true", help="keep links, attachments, scripts and hidden text"
+    )
+    p.add_argument(
+        "--keep-annotations", action="store_true",
+        help="keep comments and form fields interactive (their text is then not redacted)",
+    )  # fmt: skip
+
+    p = sub.add_parser("verify", help="check a PDF's text layer for remaining matches")
+    p.add_argument("input", type=Path, help="PDF file to check")
+    _add_match_args(p)
+    p.add_argument("--label", default=DEFAULT_LABEL, help="label used during redaction")
+
+    p = sub.add_parser("flatten", help="burn in manual boxes by converting pages to images")
+    p.add_argument("input", type=Path, help="PDF file to flatten")
+    p.add_argument(
+        "output", type=Path, nargs="?",
+        help=f"output PDF file (default: <input>{FLATTENED_SUFFIX}.pdf)",
+    )  # fmt: skip
+    p.add_argument("--dpi", type=int, default=200, help="render resolution (default: 200)")
+
+    return parser
+
+
+def _collect_terms(args: argparse.Namespace) -> list[str]:
+    terms: list[str] = list(args.term)
+    if args.terms_file:
+        terms.extend(load_terms(args.terms_file))
+    return terms
+
+
+def _print_report(report: RedactionReport) -> None:
+    print(f"{report.output}: {report.total} redaction(s)")
+    for page, items in sorted(report.hits.items()):
+        found = ", ".join(f"{text!r} x{n}" for text, n in items.items())
+        print(f"  page {page}: {found}")
+    if report.bookmarks:
+        print(f"  bookmarks: {report.bookmarks} title(s) redacted")
+    if report.metadata:
+        print(f"  metadata removed: {report.metadata.summary()}")
+    if report.image_pages:
+        pages = ", ".join(f"{p} ({n} img)" for p, n in sorted(report.image_pages.items()))
+        print(f"  review manually, pages with images: {pages}")
+    for page, remaining in sorted(report.leftovers.items()):
+        print(f"  WARNING page {page}: still found {', '.join(remaining)}")
+
+
+def _is_redacted_output(path: Path) -> bool:
+    return path.stem.upper().endswith(REDACTED_SUFFIX.upper())
+
+
+def _redact_jobs(src: Path, dst: Path | None) -> list[tuple[Path, Path]]:
+    """Pair each input with its output path."""
+    if not src.is_dir():
+        if dst is None:
+            return [(src, default_output_path(src))]
+        if dst.is_dir():
+            return [(src, dst / default_output_path(src).name)]
+        return [(src, dst)]
+
+    if dst is not None and dst.exists() and not dst.is_dir():
+        raise RedactionError("When INPUT is a directory, OUTPUT must be a directory.")
+    # Skip earlier outputs, so running twice on the same folder is safe.
+    files = sorted(
+        p for p in src.iterdir() if p.suffix.lower() == ".pdf" and not _is_redacted_output(p)
+    )
+    if not files:
+        raise RedactionError(f"No PDF files found in {src}")
+    out_dir = dst if dst is not None else src
+    return [(f, out_dir / default_output_path(f).name) for f in files]
+
+
+def _cmd_redact(args: argparse.Namespace) -> int:
+    terms = _collect_terms(args)
+    label = None if args.no_label else args.label
+    exit_code = EXIT_OK
+    for src, dst in _redact_jobs(args.input, args.output):
+        report = redact_pdf(
+            src, dst, terms, args.regex,
+            emails=args.emails, label=label, scrub=not args.no_scrub,
+            keep_annotations=args.keep_annotations,
+        )  # fmt: skip
+        _print_report(report)
+        if not report.is_clean:
+            exit_code = EXIT_LEFTOVERS
+    return exit_code
+
+
+def _cmd_verify(args: argparse.Namespace) -> int:
+    terms = _collect_terms(args)
+    if not terms and not args.regex and not args.emails:
+        raise ValueError("Nothing to match: provide terms or patterns, or enable emails.")
+    found = verify_pdf(args.input, terms, args.regex, emails=args.emails, label=args.label)
+    if not found:
+        print(f"{args.input}: clean (text layer only; images are not checked)")
+        return EXIT_OK
+    print(f"{args.input}: matches remain")
+    for page, items in sorted(found.items()):
+        print(f"  page {page}: {', '.join(items)}")
+    return EXIT_LEFTOVERS
+
+
+def _cmd_flatten(args: argparse.Namespace) -> int:
+    output = flatten_pdf(args.input, args.output, dpi=args.dpi)
+    print(f"{output}: flattened at {args.dpi} dpi")
+    return EXIT_OK
+
+
+COMMANDS = {"redact": _cmd_redact, "verify": _cmd_verify, "flatten": _cmd_flatten}
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.WARNING,
+        format="%(levelname)s: %(message)s",
+    )
+    try:
+        return COMMANDS[args.command](args)
+    except (RedactionError, ValueError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+
+
+if __name__ == "__main__":
+    sys.exit(main())
