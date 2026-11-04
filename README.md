@@ -1,6 +1,6 @@
 # redact-pdf
 
-![Python](https://img.shields.io/badge/python-3.10%2B-blue)
+![Python](https://img.shields.io/badge/python-3.11%2B-blue)
 ![License](https://img.shields.io/badge/license-AGPL--3.0-green)
 
 Remove names, addresses, email addresses and other known strings from PDFs **for real**: the text is deleted from the file, not just hidden behind a black box. Each match is replaced by a black box labelled `REDACTED`, all metadata is stripped (including the places exiftool doesn't show), and a built-in check confirms nothing was left behind.
@@ -50,7 +50,9 @@ You need [uv](https://docs.astral.sh/uv/). If you don't have it yet:
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-uv downloads a suitable Python and installs all dependencies itself; you don't need to install PyMuPDF or any system packages separately.
+Python 3.11 or newer is required. uv downloads a suitable Python and installs all dependencies itself; you don't need to install PyMuPDF or any system packages separately.
+
+The sole runtime dependency is [pymupdf-lite](https://pypi.org/project/pymupdf-lite/), which provides PyMuPDF's PDF engine without the layout-analysis and machine-learning packages bundled with full PyMuPDF. NumPy and ONNX Runtime are not required. The Python import remains `import pymupdf`.
 
 **Install as a command-line tool** (recommended):
 
@@ -75,6 +77,21 @@ cd redact-pdf
 uv sync
 uv run redact-pdf --help
 ```
+
+**Migrating an existing installation to the smaller dependency set:**
+
+For an installed command-line tool, recreate its isolated environment:
+
+```bash
+uv tool uninstall redact-pdf
+uv tool install --python 3.13 git+https://github.com/marcobertenghi/redact-pdf
+```
+
+To install changes from a local checkout instead, run `uv tool install --python 3.13 .` from that checkout after uninstalling. Python 3.13 is an example; any supported version from 3.11 onward works.
+
+For a development checkout, run `uv sync --locked`. This removes dependencies no longer needed from `.venv` while retaining the development tools. The project's `.venv` and the installed command-line tool are separate environments, so update both if you use both.
+
+uv may retain downloaded packages in its shared cache. This does not mean they are still installed. Optionally run `uv cache clean pymupdf pymupdf-layout pymupdf4llm numpy onnxruntime` to remove those cached packages; other projects may need to download them again.
 
 ## Usage
 
