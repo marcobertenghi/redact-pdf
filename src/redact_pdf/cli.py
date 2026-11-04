@@ -12,6 +12,7 @@ from pathlib import Path
 from redact_pdf import __version__
 from redact_pdf.core import (
     DEFAULT_LABEL,
+    DOCUMENT_LEVEL,
     FLATTENED_SUFFIX,
     REDACTED_SUFFIX,
     RedactionError,
@@ -80,6 +81,14 @@ def build_parser() -> argparse.ArgumentParser:
     )  # fmt: skip
     _add_match_args(p)
     p.add_argument(
+        "--no-email-domains", dest="email_domains", action="store_false",
+        help="do not redact organisation names taken from email domains (acme from x@acme.com)",
+    )  # fmt: skip
+    p.add_argument(
+        "--no-email-names", dest="email_names", action="store_false",
+        help="do not redact person names taken from email addresses (display names, address parts)",
+    )  # fmt: skip
+    p.add_argument(
         "--label", default=DEFAULT_LABEL, help=f"text inside each box (default: {DEFAULT_LABEL})"
     )
     p.add_argument("--no-label", action="store_true", help="plain black boxes without text")
@@ -114,20 +123,34 @@ def _collect_terms(args: argparse.Namespace) -> list[str]:
     return terms
 
 
+def _where(page: int) -> str:
+    return "outside page text" if page == DOCUMENT_LEVEL else f"page {page}"
+
+
+def _counts(items: dict[str, int]) -> str:
+    return ", ".join(f"{text!r} x{n}" for text, n in items.items())
+
+
 def _print_report(report: RedactionReport) -> None:
     print(f"{report.output}: {report.total} redaction(s)")
+    if report.domain_terms:
+        found = ", ".join(f"{t!r} (from {e})" for t, e in report.domain_terms.items())
+        print(f"  email domains: {found}")
+    for address, names in report.name_terms.items():
+        print(f"  names from {address}: {', '.join(map(repr, names))}")
     for page, items in sorted(report.hits.items()):
-        found = ", ".join(f"{text!r} x{n}" for text, n in items.items())
-        print(f"  page {page}: {found}")
+        print(f"  page {page}: {_counts(items)}")
     if report.bookmarks:
         print(f"  bookmarks: {report.bookmarks} title(s) redacted")
+    if report.hidden_text:
+        print(f"  outside page text: {_counts(report.hidden_text)}")
     if report.metadata:
         print(f"  metadata removed: {report.metadata.summary()}")
     if report.image_pages:
         pages = ", ".join(f"{p} ({n} img)" for p, n in sorted(report.image_pages.items()))
         print(f"  review manually, pages with images: {pages}")
     for page, remaining in sorted(report.leftovers.items()):
-        print(f"  WARNING page {page}: still found {', '.join(remaining)}")
+        print(f"  WARNING {_where(page)}: still found {', '.join(remaining)}")
 
 
 def _is_redacted_output(path: Path) -> bool:
@@ -162,7 +185,9 @@ def _cmd_redact(args: argparse.Namespace) -> int:
     for src, dst in _redact_jobs(args.input, args.output):
         report = redact_pdf(
             src, dst, terms, args.regex,
-            emails=args.emails, label=label, scrub=not args.no_scrub,
+            emails=args.emails, email_domains=args.email_domains,
+            email_names=args.email_names,
+            label=label, scrub=not args.no_scrub,
             keep_annotations=args.keep_annotations,
         )  # fmt: skip
         _print_report(report)
@@ -177,11 +202,11 @@ def _cmd_verify(args: argparse.Namespace) -> int:
         raise ValueError("Nothing to match: provide terms or patterns, or enable emails.")
     found = verify_pdf(args.input, terms, args.regex, emails=args.emails, label=args.label)
     if not found:
-        print(f"{args.input}: clean (text layer only; images are not checked)")
+        print(f"{args.input}: clean (text only; images are not checked)")
         return EXIT_OK
     print(f"{args.input}: matches remain")
     for page, items in sorted(found.items()):
-        print(f"  page {page}: {', '.join(items)}")
+        print(f"  {_where(page)}: {', '.join(items)}")
     return EXIT_LEFTOVERS
 
 

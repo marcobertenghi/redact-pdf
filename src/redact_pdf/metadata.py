@@ -9,6 +9,8 @@ show, all of which are handled here:
 * Annotation authors and timestamps (when annotations are kept)
 * EXIF, XMP, IPTC, comments and thumbnails inside embedded JPEG images
 * The trailer ``/ID``, which otherwise links the output to the original file
+* Page thumbnails, which show the page as it looked before redaction
+* The tagged-PDF structure tree, whose alternate texts repeat page content
 """
 
 from __future__ import annotations
@@ -30,7 +32,12 @@ OBJECT_METADATA_KEYS = {
     "Metadata": "XMP packets",
     "PieceInfo": "application private data",
     "LastModified": "modification dates",
+    "Thumb": "page thumbnails",
 }
+# Catalog keys removed with the structure tree. Its /Alt and /ActualText
+# entries repeat page content, so they would keep redacted words; after
+# redaction the tags no longer match the page anyway.
+STRUCTURE_KEYS = ("StructTreeRoot", "MarkInfo")
 # Annotation keys holding the author, timestamps and a generator-specific name.
 ANNOTATION_METADATA_KEYS = ("T", "M", "CreationDate")
 
@@ -75,6 +82,12 @@ def strip_metadata(doc: pymupdf.Document) -> MetadataReport:
         report.removed["document info"] += 1
     doc.set_metadata({})
     doc.xref_set_key(-1, "Info", "null")
+
+    catalog = doc.pdf_catalog()
+    if doc.xref_get_key(catalog, "StructTreeRoot")[0] != "null":
+        report.removed["accessibility tags (alt text)"] += 1
+    for key in STRUCTURE_KEYS:
+        _drop_key(doc, catalog, key)
 
     for xref in range(1, doc.xref_length()):  # includes the catalog's XMP packet
         for key, description in OBJECT_METADATA_KEYS.items():

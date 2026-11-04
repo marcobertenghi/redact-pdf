@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pymupdf
 import pytest
 
 from redact_pdf.cli import EXIT_ERROR, EXIT_LEFTOVERS, EXIT_OK, main
@@ -16,10 +17,12 @@ def test_redact_and_verify(sample_pdf: Path, tmp_path: Path) -> None:
     assert main(["verify", str(sample_pdf), "-t", "John Smith"]) == EXIT_LEFTOVERS
 
 
-def test_emails_only_by_default(sample_pdf: Path, tmp_path: Path) -> None:
+def test_emails_and_their_names_by_default(sample_pdf: Path, tmp_path: Path) -> None:
     out = tmp_path / "out.pdf"
     assert main(["redact", str(sample_pdf), str(out)]) == EXIT_OK
     assert "@" not in page_text(out)
+    assert "Smith" not in page_text(out)  # from john.smith@acme.de
+    assert main(["redact", str(sample_pdf), str(out), "--no-email-names"]) == EXIT_OK
     assert "John Smith" in page_text(out)
 
 
@@ -84,3 +87,23 @@ def test_output_directory_for_single_file(sample_pdf: Path, tmp_path: Path) -> N
 def test_flatten_output_is_optional(sample_pdf: Path) -> None:
     assert main(["flatten", str(sample_pdf), "--dpi", "72"]) == EXIT_OK
     assert sample_pdf.with_name("sample_FLATTENED.pdf").is_file()
+
+
+def test_email_domains_flag(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    src = tmp_path / "in.pdf"
+    with pymupdf.open() as doc:
+        doc.new_page().insert_text((72, 72), "ACME AG, jane@acme.com")
+        doc.save(src)
+    out = tmp_path / "out.pdf"
+    assert main(["redact", str(src), str(out)]) == EXIT_OK
+    assert "email domains: 'acme' (from jane@acme.com)" in capsys.readouterr().out
+    assert "ACME" not in page_text(out)
+    assert main(["redact", str(src), str(out), "--no-email-domains"]) == EXIT_OK
+    assert "ACME AG" in page_text(out)
+
+
+def test_verify_reports_text_outside_pages(
+    sample_pdf: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main(["verify", str(sample_pdf), "-t", "John Smith"]) == 1
+    assert "outside page text: John Smith" in capsys.readouterr().out

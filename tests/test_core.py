@@ -55,7 +55,11 @@ def test_emails_are_redacted_by_default(sample_pdf: Path, tmp_path: Path) -> Non
     out = tmp_path / "out.pdf"
     report = redact_pdf(sample_pdf, out)  # no terms needed
     assert "@" not in page_text(out)
-    assert report.hits[1] == {"john.smith@acme.de": 1}
+    # The address also gives the organisation ("ACME GmbH") and the person's name
+    assert report.hits[1] == {"john.smith@acme.de": 1, "acme": 1, "john smith": 3}
+    assert report.hits[2] == {"smith": 1}
+    assert report.domain_terms == {"acme": "john.smith@acme.de"}
+    assert report.name_terms == {"john.smith@acme.de": ["john smith", "john", "smith"]}
     assert report.is_clean
 
 
@@ -161,7 +165,7 @@ def test_encrypted_input_is_rejected(sample_pdf: Path, tmp_path: Path) -> None:
 
 def test_verify_finds_terms(sample_pdf: Path) -> None:
     found = verify_pdf(sample_pdf, ["John Smith"], emails=False)
-    assert found == {1: ["John Smith"]}
+    assert found == {0: ["John Smith"], 1: ["John Smith"]}  # 0: the author field
 
 
 def test_verify_checks_emails_by_default(sample_pdf: Path) -> None:

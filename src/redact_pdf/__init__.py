@@ -9,6 +9,7 @@ except PackageNotFoundError:  # running from a source checkout without install
 
 from redact_pdf.core import (
     DEFAULT_LABEL,
+    DOCUMENT_LEVEL,
     EMAIL_PATTERN,
     FLATTENED_SUFFIX,
     REDACTED_SUFFIX,
@@ -24,6 +25,7 @@ from redact_pdf.metadata import MetadataReport, strip_jpeg_metadata, strip_metad
 
 __all__ = [
     "DEFAULT_LABEL",
+    "DOCUMENT_LEVEL",
     "EMAIL_PATTERN",
     "FLATTENED_SUFFIX",
     "REDACTED_SUFFIX",

@@ -6,10 +6,13 @@
 Remove names, addresses, email addresses and other known strings from PDFs **for real**: the text is deleted from the file, not just hidden behind a black box. Each match is replaced by a black box labelled `REDACTED`, all metadata is stripped (including the places exiftool doesn't show), and a built-in check confirms nothing was left behind.
 
 ```console
-$ redact-pdf redact contract.pdf -t "John Smith" -t "ACME GmbH"
+$ redact-pdf redact contract.pdf -t "John Smith"
 contract_REDACTED.pdf: 5 redaction(s)
-  page 1: 'John Smith' x3, 'ACME GmbH' x1, 'john.smith@acme.de' x1
-  metadata removed: JPEG EXIF/XMP/comments x1, XMP packets x2, document info x1
+  email domains: 'acme' (from john.smith@acme.de)
+  names from john.smith@acme.de: 'john smith', 'john', 'smith'
+  page 1: 'john.smith@acme.de' x1, 'John Smith' x2, 'acme' x2
+  outside page text: 'John Smith' x1
+  metadata removed: document info x1
   review manually, pages with images: 1 (1 img)
 ```
 
@@ -21,16 +24,18 @@ Drawing a black rectangle over text in a PDF editor usually **does not remove it
 
 ## Features
 
-- **True redaction** of literal strings (case-insensitive) and regular expressions
+- **True redaction** of literal strings (case-insensitive, including `Ü`/`ü`) and regular expressions
 - **Email addresses removed by default**, no configuration needed
+- **Organisation names from email domains** removed too: `jane@acme.com` also removes "ACME" everywhere in the document
+- **Person names from email addresses** (best effort): `Lukas Körnich <lukas.koernich@acme.ch>` also removes "Lukas" and "Körnich" everywhere in the document
 - **Minimal typing**: `redact-pdf redact file.pdf` writes `file_REDACTED.pdf`
 - **Deep metadata removal**: document info, XMP everywhere, EXIF inside images, private application data, annotation authors, document ID ([details](#metadata-removal))
 - **Comments and form fields** are merged into the page, so their visible text is redacted too
-- **Bookmarks** are redacted along with the page text
+- **Text outside the page** is redacted too: bookmarks, layer names, page labels, link targets, alternate text for screen readers
 - **Readable output**: black boxes with a configurable label, auto-sized to fit
 - **Term lists**: keep your terms in a file, one per line
 - **Batch mode**: redact a whole directory in one call
-- **Self-check**: re-scans the output and exits non-zero if anything remains
+- **Self-check**: re-scans the output, including text outside the pages, and exits non-zero if anything remains
 - **Review helper**: lists pages containing images, which need a manual look
 - **Flatten**: burn in boxes drawn by hand in any PDF annotator
 - **No OCR, no cloud, no external tools**: runs locally, single Python dependency
@@ -104,22 +109,51 @@ redact-pdf redact ./documents ./redacted -f terms.txt
 | `-f, --terms-file FILE` | One term per line; lines starting with `#` are ignored. |
 | `-r, --regex PATTERN` | Regular expression to match. Repeatable. |
 | `--no-email` | Don't redact email addresses (they are redacted by default). |
+| `--no-email-domains` | Don't redact organisation names taken from email domains (see below). |
+| `--no-email-names` | Don't redact person names taken from email addresses (see below). |
 | `--label TEXT` | Text inside each box. Default: `REDACTED`. |
 | `--no-label` | Plain black boxes. |
 | `--keep-annotations` | Keep comments and form fields interactive (see below). |
 | `--no-scrub` | Keep links, attachments, scripts and hidden text. |
 
-Longer terms are matched first, so listing both `John Smith` and `Smith` works as expected. The input file is never modified; an existing output file is overwritten. In batch mode, files already ending in `_REDACTED` are skipped, so running the same command twice is safe.
+Terms are matched case-insensitively, for accented letters too (`Müller` also finds `MÜLLER`). Accented letters match however the PDF stores them: `ö` as one character or as `o` plus a combining accent, which looks identical but is different text. A space in a term matches any whitespace, including a line break, and words hyphenated at the end of a line are found (`Mül-` / `ler`). Terms also match inside longer words, so `Smith` removes `Smithson` as well; listing both `John Smith` and `Smith` works as expected.
+
+Regular expressions are applied as written: they are case-sensitive unless you add `(?i)`, and `\b` word boundaries are respected (`-r "\bAnn\b"` leaves "Annual" alone).
+
+The input file is never modified; an existing output file is overwritten. In batch mode, files already ending in `_REDACTED` are skipped, so running the same command twice is safe.
 
 #### Built-in email detection
 
 Email addresses are matched with a pragmatic pattern (`redact_pdf.EMAIL_PATTERN`) that handles what appears in real documents: dots, `+tags`, hyphens and underscores, subdomains (`mail.example.co.uk`), uppercase, and non-ASCII letters (`jürgen.müller@beispiel.de`). Surrounding punctuation such as `<...>`, `(...)`, a trailing full stop or a `mailto:` prefix is not included in the match. It deliberately does not match `user@localhost` or addresses with numeric "TLDs", which are rarely real email addresses in documents and mostly cause false positives. Repetitions are length-bounded, so matching stays fast even on unusual text.
 
+#### Organisation names from email domains
+
+When emails are redacted, the organisation name in each address's domain is redacted too, everywhere in the same document: `jane@acme.com` adds `acme`, and `a@mail.acme.co.uk` also adds `acme`. These names are matched as **whole words**, so "ACME", "ACME-Group" and "www.acme.com" are redacted, but "Acmeplex" is not. A domain found on the last page is redacted on the first page too. In batch mode, each file only uses the domains found in that file.
+
+Mail providers are skipped, so `joe@gmail.com` does not add "gmail" (and `web.de` doesn't remove every "web"). The list is `redact_pdf.FREEMAIL_DOMAINS`; it also covers `example.com` and the other reserved documentation domains. The report shows which names were added and where they came from. Use `--no-email-domains` to turn this off.
+
+#### Person names from email addresses
+
+Also when emails are redacted, the names belonging to each address are redacted everywhere in the same document, as whole words. Names come from two places:
+
+| Source | Example | Redacted |
+| --- | --- | --- |
+| Display name next to the address | `Lukas Körnich <lk@acme.ch>`, `"Körnich, Lukas" <…>`, `Alberto Ornaghi (ALoR) <…>` | "Lukas Körnich", "Lukas", "Körnich", exactly as written |
+| Parts of the address | `lukas.koernich@acme.ch` | "lukas koernich", "lukas", "koernich", accent-insensitive: "koernich" also finds "Körnich" and "Kornich" |
+
+A display name on the line before its address is found too, even across a page break. This is a heuristic, so check the `names from` lines in the report:
+
+- A single name word must start with a capital letter (`format_c@` does not remove "format" in running text, but does remove "Format" or "FORMAT"). Full names such as "john smith" match in any case.
+- Role accounts (`info@`, `support@`, `buchhaltung@` …), mailing lists (`project-users@`, `@lists.…`), titles (Dr., Herr) and email header words are skipped. Parts shorter than 3 letters, usually initials, are ignored.
+- Names that are also common capitalised words (Will, Mark, German nouns) are redacted wherever they appear capitalised. Nicknames and names that never appear next to an address are not found; add them as terms.
+
+Use `--no-email-names` to turn this off.
+
 #### Comments and form fields
 
 By default, annotations (comments, sticky notes, highlights, stamps) and form fields are merged into the page before searching. Their visible text then gets redacted like any other text, and their hidden data, such as comment text in pop-ups, author names and timestamps, disappears. The downside is that comments can no longer be edited and forms are no longer fillable.
 
-With `--keep-annotations` they stay interactive and only their authors and timestamps are removed. Their text is **not** searched or redacted in that case.
+With `--keep-annotations` they stay interactive, and their authors and timestamps are removed. Matches in their hidden text (pop-up comments, form values) are replaced, but the text they **draw on the page is not** redacted in that case.
 
 ### `verify`: check for leftovers
 
@@ -127,7 +161,7 @@ With `--keep-annotations` they stay interactive and only their authors and times
 redact-pdf verify in_REDACTED.pdf -f terms.txt
 ```
 
-Searches the text layer and lists any remaining matches, including email addresses unless `--no-email` is given. Useful after manual edits or on files redacted with other tools.
+Searches the text of every page and lists any remaining matches, including email addresses unless `--no-email` is given. Text strings outside the pages (metadata, bookmarks, layer names, link targets and so on) are checked too and listed as `outside page text`. Useful after manual edits or on files redacted with other tools.
 
 ### `flatten`: burn in manual edits
 
@@ -162,6 +196,8 @@ Metadata is stripped on every `redact` run, directly in Python; no external tool
 | Modification dates on pages | When parts of the document were last edited |
 | Annotation authors and timestamps | Names of reviewers and when they commented |
 | Trailer document ID | Links the output to the original file |
+| Page thumbnails | A preview of each page *before* redaction (removed even with `--no-scrub`) |
+| Accessibility tags and marked content (`/Alt`, `/ActualText`) | Alternate text for screen readers, which repeats the page text and shows up when text is copied |
 | Earlier revisions | Content from before previous edits (the file is fully rewritten) |
 
 JPEG images are cleaned losslessly: the compressed image data is copied byte for byte, and only metadata segments are dropped. Colour profiles needed for correct rendering are kept.
@@ -203,9 +239,9 @@ If you used Xournal++, delete the `.xopp` project file it may have saved; it ref
 
 - **Text in images is not detected.** There is no OCR by design; use the manual workflow above.
 - **Vector text** (text converted to outlines, common in logos) is not text and is not found.
-- **Exact matches only.** Hyphenated line breaks, unusual spacing or ligatures can prevent a match. Add fragments (e.g. the surname alone) as extra terms.
+- **Exact matches only.** Line breaks, hyphenation and ligatures are handled, but letter-spaced text (`J o h n`) or a name split across table cells can prevent a match. Add fragments (e.g. the surname alone) as extra terms.
 - **Obfuscated emails** such as `name [at] example [dot] com` are not detected; add them as terms or a custom regex.
-- **Case-insensitivity applies to ASCII.** For accented names, list the variants you expect (`Müller`, `MÜLLER`).
+- **Spelling variants are not matched.** `Müller` does not find `Mueller`, and `Straße` does not find `STRASSE`; list the variants you expect.
 - **Image metadata is only stripped from JPEGs**, by far the most common case. Rarer formats such as JPEG 2000 are left unchanged; `flatten` re-renders everything if you need certainty.
 - **Encrypted PDFs** must be decrypted first, e.g. `qpdf --decrypt --password=... in.pdf out.pdf`.
 
@@ -228,6 +264,9 @@ Project layout:
 redact-pdf/
 ├── src/redact_pdf/
 │   ├── core.py        # redaction, verification and flattening
+│   ├── matching.py    # finding terms by character position, email domains
+│   ├── names.py       # person names taken from email addresses
+│   ├── pdfstrings.py  # text outside the page content: string objects, marked content
 │   ├── metadata.py    # deep metadata removal, lossless JPEG cleaning
 │   ├── cli.py         # command-line interface
 │   └── __main__.py    # python -m redact_pdf
