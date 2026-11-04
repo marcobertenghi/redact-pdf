@@ -27,7 +27,7 @@ Drawing a black rectangle over text in a PDF editor usually **does not remove it
 - **True redaction** of literal strings (case-insensitive, including `Ü`/`ü`) and regular expressions
 - **Email addresses removed by default**, no configuration needed
 - **Organisation names from email domains** removed too: `jane@acme.com` also removes "ACME" everywhere in the document
-- **Person names from email addresses** (best effort): `Lukas König <lukas.koenig@acme.ch>` also removes "Lukas" and "Körnich" everywhere in the document
+- **Person names from email addresses** (best effort): `Lukas König <lukas.koenig@acme.ch>` also removes "Lukas" and "König" everywhere in the document
 - **Minimal typing**: `redact-pdf redact file.pdf` writes `file_REDACTED.pdf`
 - **Deep metadata removal**: document info, XMP everywhere, EXIF inside images, private application data, annotation authors, document ID ([details](#metadata-removal))
 - **Comments and form fields** are merged into the page, so their visible text is redacted too
