@@ -1,4 +1,4 @@
-"""Command-line interface: ``redact-pdf {redact,verify,apply-boxes,flatten}``."""
+"""Command-line interface: ``redact-pdf {redact,verify,apply-boxes,remove-pages,flatten}``."""
 
 from __future__ import annotations
 
@@ -24,6 +24,7 @@ from redact_pdf.core import (
     redact_pdf,
     verify_pdf,
 )
+from redact_pdf.pages import TRIMMED_SUFFIX, PageRemovalReport, remove_pages
 
 EXIT_OK = 0
 EXIT_LEFTOVERS = 1
@@ -120,6 +121,27 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "output", type=Path, nargs="?",
         help=f"output PDF file (default: <input>{APPLIED_SUFFIX}.pdf)",
+    )  # fmt: skip
+    p.add_argument(
+        "--no-scrub", action="store_true", help="keep links, attachments, scripts and hidden text"
+    )
+
+    p = sub.add_parser(
+        "remove-pages",
+        help="remove pages completely; the remaining pages follow on directly",
+        description=(
+            "Remove pages and everything only they use, including bookmarks to them. "
+            "Metadata is stripped as in redact. "
+            f"OUTPUT defaults to <input>{TRIMMED_SUFFIX}.pdf."
+        ),
+    )
+    p.add_argument("input", type=Path, help="PDF file")
+    p.add_argument(
+        "pages", help="pages to remove, numbered from 1: 92-100, 1,3,92-100 or 92- (to the end)"
+    )
+    p.add_argument(
+        "output", type=Path, nargs="?",
+        help=f"output PDF file (default: <input>{TRIMMED_SUFFIX}.pdf)",
     )  # fmt: skip
     p.add_argument(
         "--no-scrub", action="store_true", help="keep links, attachments, scripts and hidden text"
@@ -232,6 +254,36 @@ def _cmd_verify(args: argparse.Namespace) -> int:
     return EXIT_LEFTOVERS
 
 
+def _ranges(pages: list[int]) -> str:
+    """``[1, 2, 3, 7]`` -> ``"1-3, 7"``."""
+    runs: list[list[int]] = []
+    for n in pages:
+        if runs and n == runs[-1][1] + 1:
+            runs[-1][1] = n
+        else:
+            runs.append([n, n])
+    return ", ".join(str(a) if a == b else f"{a}-{b}" for a, b in runs)
+
+
+def _print_removal_report(report: PageRemovalReport) -> None:
+    print(
+        f"{report.output}: removed {len(report.removed)} page(s) ({_ranges(report.removed)}), "
+        f"{report.pages_left} left"
+    )
+    if report.bookmarks:
+        print(f"  bookmarks to removed pages dropped: {report.bookmarks}")
+    if report.metadata:
+        print(f"  metadata removed: {report.metadata.summary()}")
+    if report.leftovers:
+        print(f"  WARNING {report.leftovers} removed page object(s) still in the file")
+
+
+def _cmd_remove_pages(args: argparse.Namespace) -> int:
+    report = remove_pages(args.input, args.pages, args.output, scrub=not args.no_scrub)
+    _print_removal_report(report)
+    return EXIT_OK if report.is_clean else EXIT_LEFTOVERS
+
+
 def _cmd_flatten(args: argparse.Namespace) -> int:
     output = flatten_pdf(args.input, args.output, dpi=args.dpi)
     print(f"{output}: flattened at {args.dpi} dpi")
@@ -275,6 +327,7 @@ COMMANDS = {
     "redact": _cmd_redact,
     "verify": _cmd_verify,
     "apply-boxes": _cmd_apply_boxes,
+    "remove-pages": _cmd_remove_pages,
     "flatten": _cmd_flatten,
 }
 

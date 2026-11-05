@@ -24,6 +24,7 @@ from redact_pdf.core import (
 )
 from redact_pdf.images import HIDDEN_IMAGE, blank_hidden_image_areas, hidden_image_pages
 from redact_pdf.metadata import MetadataReport, strip_jpeg_metadata, strip_metadata
+from redact_pdf.pages import TRIMMED_SUFFIX, PageRemovalReport, parse_pages, remove_pages
 
 __all__ = [
     "APPLIED_SUFFIX",
@@ -33,8 +34,10 @@ __all__ = [
     "FLATTENED_SUFFIX",
     "HIDDEN_IMAGE",
     "REDACTED_SUFFIX",
+    "TRIMMED_SUFFIX",
     "BoxReport",
     "MetadataReport",
+    "PageRemovalReport",
     "RedactionError",
     "RedactionReport",
     "__version__",
@@ -44,7 +47,9 @@ __all__ = [
     "flatten_pdf",
     "hidden_image_pages",
     "load_terms",
+    "parse_pages",
     "redact_pdf",
+    "remove_pages",
     "strip_jpeg_metadata",
     "strip_metadata",
     "verify_pdf",

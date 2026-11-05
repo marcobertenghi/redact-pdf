@@ -39,6 +39,7 @@ Drawing a black rectangle over text in a PDF editor usually **does not remove it
 - **Self-check**: re-scans the output, including text outside the pages, and exits non-zero if anything remains
 - **Review helper**: lists pages containing images, which need a manual look
 - **Apply manual boxes**: marks drawn by hand (in Firefox or any PDF viewer) become real redactions, without turning pages into images
+- **Remove pages**: drop page ranges completely, including bookmarks and jump targets to them; the remaining pages follow on directly
 - **Flatten**: alternatively, burn everything into images
 - **No OCR, no cloud, no external tools**: runs locally, single Python dependency
 
@@ -211,6 +212,20 @@ Filled design elements are left alone: a black header bar with white text on it 
 
 A drawing such as a signature is deleted when it lies mostly under a box. A longer drawing that only passes through a box, such as a table border, is kept so the page doesn't lose its lines; the part under the box stays in the file.
 
+### `remove-pages`: drop pages completely
+
+```bash
+redact-pdf remove-pages report.pdf 92-100              # -> report_TRIMMED.pdf
+redact-pdf remove-pages report.pdf 1,3,92-100 out.pdf  # lists and ranges
+redact-pdf remove-pages report.pdf 92-                 # page 92 to the end
+```
+
+Removes the pages and everything only they use: text, images, fonts, comments and form fields. Bookmarks to removed pages are dropped (their titles would otherwise stay in the file), as are links and named jump targets that led there. The remaining pages follow on directly: old page 101 becomes page 92. Page numbers are given as in the input file.
+
+Deleting a page from the page list alone is not enough, because a jump target, the "open at" action or a form field can still point to it and keep it, with all its content, in the file. `remove-pages` clears those references and checks afterwards that no removed page is left. Metadata and hidden content are removed as in `redact`; `--no-scrub` keeps links, attachments and scripts.
+
+Numbers printed on the pages themselves (a footer reading "Page 101") are not changed. Custom page labels (viewer numbering such as i, ii, 1, 2) are kept as defined.
+
 ### `flatten`: burn in manual edits
 
 ```bash
@@ -225,7 +240,7 @@ Renders every page, including annotations, to an image. Nothing hidden survives,
 | Code | Meaning |
 | --- | --- |
 | `0` | Success; output is clean |
-| `1` | Matches remain in the output (or in the file passed to `verify`); for `apply-boxes`: no boxes found, text left under a box, or a mark that does not hide text |
+| `1` | Matches remain in the output (or in the file passed to `verify`); for `apply-boxes`: no boxes found, text left under a box, or a mark that does not hide text; for `remove-pages`: a removed page is still in the file |
 | `2` | Error, e.g. missing file, encrypted PDF, invalid arguments |
 
 This makes the tool easy to use in scripts and CI pipelines.
@@ -324,6 +339,7 @@ redact-pdf/
 │   ├── core.py        # redaction, verification and flattening
 │   ├── boxes.py       # apply-boxes: manual boxes become real redactions
 │   ├── images.py      # image areas no page shows (cropped, off the page)
+│   ├── pages.py       # remove-pages: drop pages completely
 │   ├── matching.py    # finding terms by character position, email domains
 │   ├── names.py       # person names taken from email addresses
 │   ├── pdfstrings.py  # text outside the page content: string objects, marked content
