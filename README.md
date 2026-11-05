@@ -189,6 +189,9 @@ Searches the text of every page and lists any remaining matches, including email
 ```bash
 redact-pdf apply-boxes reviewed.pdf          # -> reviewed_FINAL.pdf
 redact-pdf apply-boxes reviewed.pdf final.pdf
+
+# Faster after marking blots or highlights in Firefox and saving normally
+redact-pdf apply-boxes reviewed.pdf --annotations-only
 ```
 
 Marks drawn in a PDF viewer such as Firefox only *cover* content; the text, image pixels and drawings underneath stay in the file. `apply-boxes` deletes what is under each box, like `redact` does for matched text. Pages are not turned into images, so the rest of the text stays searchable and the file stays small: a 23-page document with 9 boxes went from 387 KB to 392 KB, where `flatten` produced 7.1 MB.
@@ -207,6 +210,10 @@ What counts as a box:
 | Highlights, freehand drawing, rectangles, circles, polygons, strike-outs and redaction marks, in any colour and opacity. Highlights remove exactly the highlighted text; freehand drawing removes a rectangle around each stroke, as wide as the pen. | Opaque, filled shapes of any colour, including white "whiteout" boxes, that lie over text, images or drawings. A shape that is not a rectangle is applied as its bounding rectangle. |
 
 Filled design elements are left alone: a black header bar with white text on it covers nothing, so it is not a box. Comments and form fields are merged into the page, and metadata is removed as in `redact`.
+
+Use `--annotations-only` when your manual marks are annotations, as with Firefox's **Draw** and **Highlight** tools saved with **Save**. Each pen stroke becomes the same box as in the default mode, including its pen width; separate blots stay separate. This mode skips searching existing page drawings for boxes, so earlier automatic redactions are not detected and applied again. It still removes content under the manual marks, cleans metadata and hidden image areas, and verifies the result.
+
+Boxes already drawn into page content, such as Xournal++ exports, are not applied or checked in this mode. Use the default mode for those files, including mixed files where some manual marks are annotations and others are page drawings. Text boxes and comments are merged into the page but are not treated as redaction marks in `--annotations-only` mode. If no annotation marks are found, the command warns and exits with code 1.
 
 `apply-boxes` exits with code 1 and a warning when it finds no boxes, or when something lies over text without hiding it: a see-through fill, the highlighter or a pen scribble. Such marks look like redactions on screen but leave the text readable and copyable; redraw them as filled boxes.
 
@@ -301,9 +308,9 @@ Automatic redaction only finds text that exists *as text* in the PDF. Text insid
 
 4. **Apply the boxes.** This step is required after step 3: Firefox and other viewers only draw *on top* of the original, which is still intact underneath.
    ```bash
-   redact-pdf apply-boxes reviewed.pdf     # -> reviewed_FINAL.pdf
+   redact-pdf apply-boxes reviewed.pdf --annotations-only     # -> reviewed_FINAL.pdf
    ```
-   If it warns that it found no boxes, check that you saved the file with your marks. If it warns about shapes that do not hide text, redraw them and save again.
+   For Firefox blots and highlights saved normally, `--annotations-only` avoids scanning the existing page drawings and automatic redaction boxes. If it warns that it found no annotation boxes, check that you saved the file with your marks. For filled boxes exported into page content, run without `--annotations-only`; in that mode, warnings about shapes that do not hide text mean you should redraw them and save again.
 
 5. **Check the result.** Run `redact-pdf verify` on the final file. Open it, select all text on a page and paste it somewhere to confirm nothing unexpected comes along.
 

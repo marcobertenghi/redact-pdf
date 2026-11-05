@@ -8,7 +8,7 @@ from pathlib import Path
 import pymupdf
 import pytest
 
-from redact_pdf import apply_boxes
+from redact_pdf import apply_boxes, redact_pdf
 from redact_pdf.cli import EXIT_LEFTOVERS, EXIT_OK, main
 from tests.conftest import page_text
 
@@ -66,14 +66,26 @@ def test_whiteout_box(tmp_path: Path) -> None:
         assert pix.pixel(pix.width // 2, pix.height // 2) == (255, 255, 255)
 
 
-def test_image_pixels_under_box_are_removed(tmp_path: Path) -> None:
-    src = reviewed_pdf(tmp_path / "in.pdf", box(pymupdf.Rect(72, 200, 172, 300)))
-    report = apply_boxes(src, tmp_path / "out.pdf")
-    assert report.drawn == {1: 1}
+@pytest.mark.parametrize("annotations_only", [False, True])
+def test_image_pixels_under_box_are_removed(tmp_path: Path, annotations_only: bool) -> None:
+    rect = pymupdf.Rect(72, 200, 172, 300)
+
+    def mark(page: pymupdf.Page) -> None:
+        if annotations_only:
+            ink = page.add_ink_annot([[(80, 250), (164, 250)]])
+            ink.set_border(width=16)
+            ink.update()
+        else:
+            page.draw_rect(rect, fill=BLACK, color=BLACK)
+
+    src = reviewed_pdf(tmp_path / "in.pdf", mark)
+    report = apply_boxes(src, tmp_path / "out.pdf", annotations_only=annotations_only)
+    assert report.total == 1
+    assert report.is_clean
     with pymupdf.open(report.output) as doc:
         xref = doc[0].get_images()[0][0]
         image = pymupdf.Pixmap(doc, xref)  # the image data itself, not the rendering
-        assert image.pixel(20, 50) != (40, 140, 220)  # under the box
+        assert image.pixel(20, 50) != (40, 140, 220)  # under the box or ink stroke
         assert image.pixel(180, 50) == (40, 140, 220)  # outside it
 
 
@@ -152,8 +164,11 @@ def annotated_pdf(path: Path) -> Path:
     return path
 
 
-def test_annotations_are_applied(tmp_path: Path) -> None:
-    report = apply_boxes(annotated_pdf(tmp_path / "in.pdf"), tmp_path / "out.pdf")
+@pytest.mark.parametrize("annotations_only", [False, True])
+def test_annotations_are_applied(tmp_path: Path, annotations_only: bool) -> None:
+    report = apply_boxes(
+        annotated_pdf(tmp_path / "in.pdf"), tmp_path / "out.pdf", annotations_only=annotations_only
+    )
     assert report.annotations == {1: 3}  # square, highlight, ink; not the sticky note
     assert report.is_clean
     text = page_text(report.output)
@@ -202,7 +217,8 @@ def test_opaque_text_box_over_text_is_applied(tmp_path: Path) -> None:
     assert "Koernich" not in text and "Patient:" in text
 
 
-def test_pen_strokes_are_applied_one_by_one(tmp_path: Path) -> None:
+@pytest.mark.parametrize("annotations_only", [False, True])
+def test_pen_strokes_are_applied_one_by_one(tmp_path: Path, annotations_only: bool) -> None:
     """Two blots drawn in one go (one ink annotation, as Firefox saves them)
     only take what they paint, not every line between them."""
     src = tmp_path / "in.pdf"
@@ -224,10 +240,64 @@ def test_pen_strokes_are_applied_one_by_one(tmp_path: Path) -> None:
         ink.set_border(width=8)
         ink.update()
         doc.save(src)
-    report = apply_boxes(src, tmp_path / "out.pdf")
+    report = apply_boxes(src, tmp_path / "out.pdf", annotations_only=annotations_only)
     assert report.annotations == {1: 2}  # one box per stroke
     assert report.is_clean
     text = page_text(report.output)
     assert "Koernich" not in text and "Finn" not in text
     assert "Keep this line one." in text and "Keep this line two." in text
     assert "Patient:" in text and "Signed:" in text
+
+
+def test_annotations_only_after_automatic_redaction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    src = tmp_path / "in.pdf"
+    with pymupdf.open() as doc:
+        for _ in range(2):
+            page = doc.new_page()
+            page.insert_text((72, 70), "PrivateOrganisation public information", fontsize=12)
+            page.insert_text((72, 100), NAME_LINE, fontsize=12)
+        doc.save(src)
+    automatic = redact_pdf(src, tmp_path / "auto.pdf", ["PrivateOrganisation"], emails=False)
+    assert automatic.is_clean
+    with pymupdf.open(automatic.output) as doc:
+        ink = doc[0].add_ink_annot([[(126, 96), (202, 96)]])
+        ink.set_border(width=8)
+        ink.update()
+        doc.save(tmp_path / "reviewed.pdf")
+
+    def no_drawing_scan(page: pymupdf.Page) -> None:
+        pytest.fail("Annotations-only processing must skip drawn-box detection")
+
+    monkeypatch.setattr("redact_pdf.boxes._drawn_boxes", no_drawing_scan)
+    report = apply_boxes(tmp_path / "reviewed.pdf", tmp_path / "out.pdf", annotations_only=True)
+    assert report.is_clean
+    assert report.drawn == {} and report.annotations == {1: 1}
+    with pymupdf.open(report.output) as doc:
+        assert "Koernich" not in doc[0].get_text()
+        assert NAME_LINE in doc[1].get_text()  # the page without new marks is kept
+        for page in doc:
+            assert "REDACTED" in page.get_text()
+            assert "public information" in page.get_text()
+            assert "PrivateOrganisation" not in page.get_text()
+
+
+def test_annotations_only_cli_does_not_apply_page_drawings(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    src = reviewed_pdf(tmp_path / "in.pdf", box(NAME))
+    assert main(["apply-boxes", str(src), "--annotations-only"]) == EXIT_LEFTOVERS
+    assert "Koernich" in page_text(tmp_path / "in_FINAL.pdf")
+    output = capsys.readouterr().out
+    assert "no annotation boxes found" in output
+    assert "rerun without --annotations-only" in output
+    # The default still applies page drawings.
+    assert main(["apply-boxes", str(src)]) == EXIT_OK
+    assert "Koernich" not in page_text(tmp_path / "in_FINAL.pdf")
+
+
+def test_annotations_only_cli(tmp_path: Path) -> None:
+    src = annotated_pdf(tmp_path / "in.pdf")
+    assert main(["apply-boxes", str(src), "--annotations-only"]) == EXIT_OK
+    assert "Koernich" not in page_text(tmp_path / "in_FINAL.pdf")

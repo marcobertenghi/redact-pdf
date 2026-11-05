@@ -129,7 +129,11 @@ class _Item:
 
 
 def apply_boxes(
-    input_path: str | Path, output_path: str | Path | None = None, *, scrub: bool = True
+    input_path: str | Path,
+    output_path: str | Path | None = None,
+    *,
+    scrub: bool = True,
+    annotations_only: bool = False,
 ) -> BoxReport:
     """Delete the content under boxes drawn during manual review.
 
@@ -144,6 +148,10 @@ def apply_boxes(
         input_path: The reviewed PDF. Never modified.
         output_path: Destination PDF. Defaults to ``<input>_FINAL.pdf``.
         scrub: Also remove links, attachments, scripts and other hidden content.
+        annotations_only: Only apply annotation marks, such as Firefox highlights
+            and ink strokes. Skip detection of boxes drawn into page content,
+            including boxes left by earlier automatic redactions. Each ink
+            stroke still becomes its own box. Cleanup and verification still run.
 
     Returns:
         A :class:`BoxReport`. Check :attr:`BoxReport.is_clean`.
@@ -163,7 +171,7 @@ def apply_boxes(
 
         for page in doc:
             page_no = page.number + 1
-            drawn, ignored = _drawn_boxes(page)
+            drawn, ignored = ([], 0) if annotations_only else _drawn_boxes(page)
             boxes = drawn + marked[page_no]
             if ignored:
                 report.ignored[page_no] = ignored

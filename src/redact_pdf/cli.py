@@ -119,6 +119,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("input", type=Path, help="the reviewed PDF")
     p.add_argument(
+        "--annotations-only", action="store_true",
+        help="apply only annotation marks (e.g. Firefox blots); skip drawn-box detection for speed",
+    )  # fmt: skip
+    p.add_argument(
         "output", type=Path, nargs="?",
         help=f"output PDF file (default: <input>{APPLIED_SUFFIX}.pdf)",
     )  # fmt: skip
@@ -294,7 +298,7 @@ def _pages(counts: dict[int, int]) -> str:
     return ", ".join(f"{page} ({n})" for page, n in sorted(counts.items()))
 
 
-def _print_box_report(report: BoxReport) -> None:
+def _print_box_report(report: BoxReport, *, annotations_only: bool = False) -> None:
     print(f"{report.output}: {report.total} box(es) applied")
     if report.drawn:
         print(f"  drawn boxes, pages: {_pages(report.drawn)}")
@@ -305,7 +309,13 @@ def _print_box_report(report: BoxReport) -> None:
     if report.hidden_images:
         print(f"  image areas no page shows, blanked: {report.hidden_images} image(s)")
     if not report.total:
-        print("  WARNING no boxes found: highlight, draw or box what should go, then save")
+        if annotations_only:
+            print(
+                "  WARNING no annotation boxes found: save the viewer's marks as annotations; "
+                "for boxes drawn into page content, rerun without --annotations-only"
+            )
+        else:
+            print("  WARNING no boxes found: highlight, draw or box what should go, then save")
     for page, n in sorted(report.ignored.items()):
         print(
             f"  WARNING page {page}: {n} shape(s) over text or images that do not hide them "
@@ -318,8 +328,10 @@ def _print_box_report(report: BoxReport) -> None:
 
 
 def _cmd_apply_boxes(args: argparse.Namespace) -> int:
-    report = apply_boxes(args.input, args.output, scrub=not args.no_scrub)
-    _print_box_report(report)
+    report = apply_boxes(
+        args.input, args.output, scrub=not args.no_scrub, annotations_only=args.annotations_only
+    )
+    _print_box_report(report, annotations_only=args.annotations_only)
     return EXIT_OK if report.is_clean else EXIT_LEFTOVERS
 
 
