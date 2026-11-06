@@ -79,6 +79,49 @@ def test_errors_return_exit_code(sample_pdf: Path, capsys: pytest.CaptureFixture
     assert "error:" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("command", ["redact", "apply-boxes", "remove-pages", "flatten"])
+@pytest.mark.parametrize("problem", ["missing", "invalid", "encrypted", "same-path"])
+def test_document_errors_preserve_input_and_return_error(
+    sample_pdf: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    command: str,
+    problem: str,
+) -> None:
+    """All writing commands share input protection and document error handling."""
+    src = tmp_path / "input.pdf"
+    dst = tmp_path / "output.pdf"
+    if problem == "invalid":
+        src.write_bytes(b"Not a PDF")
+    elif problem == "encrypted":
+        with pymupdf.open(sample_pdf) as doc:
+            doc.save(src, encryption=pymupdf.PDF_ENCRYPT_AES_256, user_pw="pw", owner_pw="pw")
+    elif problem == "same-path":
+        src = sample_pdf
+        dst = src
+    before = src.read_bytes() if src.exists() else None
+    args = [command, str(src)]
+    if command == "remove-pages":
+        args.append("1")
+    args.append(str(dst))
+
+    assert main(args) == EXIT_ERROR
+    error = capsys.readouterr().err
+    assert "error:" in error
+    if problem == "invalid":
+        assert "Could not open" in error
+    elif problem == "encrypted":
+        assert "password protected" in error
+    elif problem == "same-path":
+        assert "Output must differ from input" in error
+    else:
+        assert str(src) in error
+    if before is not None:
+        assert src.read_bytes() == before
+    if dst != src:
+        assert not dst.exists()
+
+
 def test_invalid_regex_is_rejected(sample_pdf: Path, tmp_path: Path) -> None:
     with pytest.raises(SystemExit):
         main(["redact", str(sample_pdf), str(tmp_path / "o.pdf"), "-r", "("])

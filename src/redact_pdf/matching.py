@@ -14,6 +14,7 @@ import unicodedata
 from collections import Counter
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from typing import NamedTuple
 
 import pymupdf
 
@@ -246,6 +247,17 @@ def redact_text(
     return "".join(out), counts
 
 
+class _TextVariant(NamedTuple):
+    """Extracted text and its mapping back to the original page characters.
+
+    Inserted line breaks map to -1. Dehyphenated text omits characters from
+    the mapping, but the remaining indices still refer to the original page.
+    """
+
+    text: str
+    char_indices: list[int]
+
+
 class PageText:
     """A page's text with one bounding box per character.
 
@@ -273,12 +285,10 @@ class PageText:
 
         self.variants = [self._render(lines, dehyphenate=False)]
         joined = self._render(lines, dehyphenate=True)
-        if joined[0] != self.variants[0][0]:
+        if joined.text != self.variants[0].text:
             self.variants.append(joined)
 
-    def _render(
-        self, lines: Sequence[tuple[int, int]], *, dehyphenate: bool
-    ) -> tuple[str, list[int]]:
+    def _render(self, lines: Sequence[tuple[int, int]], *, dehyphenate: bool) -> _TextVariant:
         """Return the text and, per text position, its character index (-1 for
         the newlines added between lines).
 
@@ -309,14 +319,14 @@ class PageText:
             if not join:
                 text.append("\n")
                 index.append(-1)
-        return "".join(text), index
+        return _TextVariant("".join(text), index)
 
     def find(self, matchers: Sequence[Matcher], protect: str | None = None) -> list[Span]:
         """Matches as ``(name, first_char, end_char)`` in character indices."""
         found: dict[tuple[int, int], str] = {}
-        for text, index in self.variants:
-            for name, start, end in find_in_text(text, matchers, protect):
-                chars = [i for i in index[start:end] if i >= 0]
+        for variant in self.variants:
+            for name, start, end in find_in_text(variant.text, matchers, protect):
+                chars = [i for i in variant.char_indices[start:end] if i >= 0]
                 if chars:
                     found.setdefault((chars[0], chars[-1] + 1), name)
         return [(name, start, end) for (start, end), name in found.items()]

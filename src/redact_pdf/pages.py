@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pymupdf
 
-from redact_pdf.core import _check_paths, _open, clean_and_save, default_output_path
+from redact_pdf.document import check_output_path, clean_and_save, default_output_path, open_pdf
 from redact_pdf.metadata import MetadataReport
 
 __all__ = ["TRIMMED_SUFFIX", "PageRemovalReport", "parse_pages", "remove_pages"]
@@ -74,10 +74,14 @@ def parse_pages(spec: str | Iterable[int], page_count: int) -> list[int]:
             match = re.fullmatch(r"(\d+)(?:(-)(\d*))?", part)
             if not match:
                 raise ValueError(f"Invalid page range {part!r}; use e.g. 5, 92-100 or 92-")
-            first = int(match.group(1))
-            last = (
-                int(match.group(3)) if match.group(3) else (page_count if match.group(2) else first)
-            )
+            first_text, separator, last_text = match.groups()
+            first = int(first_text)
+            if separator is None:
+                last = first
+            elif last_text:
+                last = int(last_text)
+            else:
+                last = page_count  # open-ended range, e.g. "92-"
             if last < first:
                 raise ValueError(f"Invalid page range {part!r}: {last} comes before {first}")
             numbers.update(range(first, last + 1))
@@ -121,10 +125,10 @@ def remove_pages(
     """
     src = Path(input_path)
     dst = Path(output_path) if output_path is not None else default_output_path(src, TRIMMED_SUFFIX)
-    _check_paths(src, dst)
+    check_output_path(src, dst)
 
     report = PageRemovalReport(output=dst)
-    with _open(src) as doc:
+    with open_pdf(src) as doc:
         report.removed = parse_pages(pages, doc.page_count)
         if len(report.removed) == doc.page_count:
             raise ValueError("Cannot remove every page")

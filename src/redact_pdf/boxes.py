@@ -35,12 +35,12 @@ from typing import Any
 
 import pymupdf
 
-from redact_pdf.core import (
+from redact_pdf.document import (
     REDACT_IMAGE_PIXELS,
-    _check_paths,
-    _open,
+    check_output_path,
     clean_and_save,
     default_output_path,
+    open_pdf,
 )
 from redact_pdf.images import blank_hidden_image_areas, hidden_image_pages
 from redact_pdf.metadata import MetadataReport
@@ -158,11 +158,11 @@ def apply_boxes(
     """
     src = Path(input_path)
     dst = Path(output_path) if output_path is not None else default_output_path(src, APPLIED_SUFFIX)
-    _check_paths(src, dst)
+    check_output_path(src, dst)
 
     report = BoxReport(output=dst)
     hidden: dict[int, list[set[_Char]]] = {}  # per page, per box: characters to remove
-    with _open(src) as doc:
+    with open_pdf(src) as doc:
         # Annotations first: their appearance would otherwise also be seen as
         # drawings. The rest (comments, form fields) become page content, so
         # an opaque text box over text is then found like a drawn box.
@@ -342,22 +342,34 @@ def _looks_like_a_box(drawing: dict[str, Any], rect: pymupdf.Rect) -> bool:
     return color is not None and width >= _MARKER_WIDTH and not _is_white(color)
 
 
+def _annotation_rects(annot: pymupdf.Annot) -> list[pymupdf.Rect]:
+    """The areas a supported mark removes, without modifying the annotation.
+
+    Text markup follows its line quads, ink follows individual pen strokes,
+    and area marks use their rectangle. Other annotations are not marks.
+    """
+    kind = annot.type[1]
+    if kind in _TEXT_MARKUP:
+        vertices = annot.vertices or []
+        quads = [pymupdf.Quad(*vertices[i : i + 4]) for i in range(0, len(vertices) - 3, 4)]
+        return [q.rect for q in quads] or [annot.rect]
+    if kind in _PEN_MARKS:
+        return _stroke_rects(annot)
+    if kind in _AREA_MARKS:
+        return [annot.rect]
+    return []
+
+
 def _annotation_boxes(page: pymupdf.Page) -> list[_Box]:
     """Annotations that mark an area, removed from the page and returned."""
     boxes: list[_Box] = []
     for annot in list(page.annots()):
-        kind = annot.type[1]
-        if kind in _TEXT_MARKUP:
-            vertices = annot.vertices or []
-            quads = [pymupdf.Quad(*vertices[i : i + 4]) for i in range(0, len(vertices) - 3, 4)]
-            rects = [q.rect for q in quads] or [annot.rect]
-        elif kind in _PEN_MARKS:
-            rects = _stroke_rects(annot)
-        elif kind in _AREA_MARKS:
-            rects = [annot.rect]
-        else:
+        rects = _annotation_rects(annot)
+        if not rects:
             continue
-        fill = annot.colors.get("fill") if kind in ("Square", "Circle", "Polygon") else None
+        fill = (
+            annot.colors.get("fill") if annot.type[1] in ("Square", "Circle", "Polygon") else None
+        )
         color = tuple(fill) if fill and len(fill) == 3 else (0.0, 0.0, 0.0)
         boxes += [_Box(pymupdf.Rect(r), color) for r in rects if not pymupdf.Rect(r).is_empty]
         page.delete_annot(annot)
@@ -416,7 +428,7 @@ def _check(path: Path, hidden: dict[int, list[set[_Char]]]) -> dict[int, int]:
     sideways when its neighbours were removed does not count.
     """
     leftovers: dict[int, int] = {}
-    with _open(path) as doc:
+    with open_pdf(path) as doc:
         for page_no, per_box in hidden.items():
             remaining = _chars(doc[page_no - 1])
             if count := sum(1 for chars in per_box if chars & remaining):

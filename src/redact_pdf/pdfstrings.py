@@ -15,6 +15,7 @@ import re
 from collections import Counter
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
+from typing import Literal
 
 import pymupdf
 
@@ -43,7 +44,7 @@ MARKED_CONTENT_TEXT_KEYS = frozenset({b"/ActualText", b"/Alt", b"/E"})
 
 @dataclass(frozen=True)
 class Token:
-    kind: str  # "string", "name" or "other"
+    kind: Literal["string", "name", "other"]
     start: int
     end: int
 

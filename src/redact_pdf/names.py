@@ -273,8 +273,9 @@ def email_name_terms(text: str) -> NameTerms:
             full = " ".join(words)
             result.add(address, full, _name_matcher(full))
         for word in words:
-            if _fold(word) not in seen:
-                seen[_fold(word)] = address
+            folded = _fold(word)
+            if folded not in seen:
+                seen[folded] = address
                 result.add(address, word, _name_matcher(word))
 
     for m in EMAIL_PATTERN.finditer(text):
@@ -282,7 +283,8 @@ def email_name_terms(text: str) -> NameTerms:
         if _is_mailing_list(address):
             continue
         known = [_fold(w) for w in shown.get(address.lower(), [])]
-        words = [_fold(w) for w in _local_words(address)]
+        local_words = _local_words(address)
+        words = [_fold(w) for w in local_words]
         if (
             len(words) > 1
             and not known
@@ -290,7 +292,7 @@ def email_name_terms(text: str) -> NameTerms:
         ):
             full = " ".join(words)  # john.smith@ -> "john smith", one box
             result.add(address, full, loose_matcher(full))
-        for word in _local_words(address):
+        for word in local_words:
             folded = _fold(word)  # müller -> mueller, then matched loosely
             if (
                 len(folded) < _MIN_LOCAL_PART

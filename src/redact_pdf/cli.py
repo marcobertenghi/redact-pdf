@@ -16,14 +16,13 @@ from redact_pdf.core import (
     DOCUMENT_LEVEL,
     FLATTENED_SUFFIX,
     REDACTED_SUFFIX,
-    RedactionError,
     RedactionReport,
-    default_output_path,
     flatten_pdf,
     load_terms,
     redact_pdf,
     verify_pdf,
 )
+from redact_pdf.document import RedactionError, default_output_path
 from redact_pdf.pages import TRIMMED_SUFFIX, PageRemovalReport, remove_pages
 
 EXIT_OK = 0
@@ -58,6 +57,78 @@ def _add_match_args(parser: argparse.ArgumentParser) -> None:
     )  # fmt: skip
 
 
+def _configure_redact(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("input", type=Path, help="PDF file or directory of PDFs")
+    parser.add_argument(
+        "output", type=Path, nargs="?",
+        help=f"output file or directory (default: <input>{REDACTED_SUFFIX}.pdf)",
+    )  # fmt: skip
+    _add_match_args(parser)
+    parser.add_argument(
+        "--no-email-domains", dest="email_domains", action="store_false",
+        help="do not redact organisation names taken from email domains (acme from x@acme.com)",
+    )  # fmt: skip
+    parser.add_argument(
+        "--no-email-names", dest="email_names", action="store_false",
+        help="do not redact person names taken from email addresses (display names, address parts)",
+    )  # fmt: skip
+    parser.add_argument(
+        "--label", default=DEFAULT_LABEL, help=f"text inside each box (default: {DEFAULT_LABEL})"
+    )
+    parser.add_argument("--no-label", action="store_true", help="plain black boxes without text")
+    parser.add_argument(
+        "--no-scrub", action="store_true", help="keep links, attachments, scripts and hidden text"
+    )
+    parser.add_argument(
+        "--keep-annotations", action="store_true",
+        help="keep comments and form fields interactive (their text is then not redacted)",
+    )  # fmt: skip
+
+
+def _configure_verify(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("input", type=Path, help="PDF file to check")
+    _add_match_args(parser)
+    parser.add_argument("--label", default=DEFAULT_LABEL, help="label used during redaction")
+
+
+def _configure_apply_boxes(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("input", type=Path, help="the reviewed PDF")
+    parser.add_argument(
+        "--annotations-only", action="store_true",
+        help="apply only annotation marks (e.g. Firefox blots); skip drawn-box detection for speed",
+    )  # fmt: skip
+    parser.add_argument(
+        "output", type=Path, nargs="?",
+        help=f"output PDF file (default: <input>{APPLIED_SUFFIX}.pdf)",
+    )  # fmt: skip
+    parser.add_argument(
+        "--no-scrub", action="store_true", help="keep links, attachments, scripts and hidden text"
+    )
+
+
+def _configure_remove_pages(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("input", type=Path, help="PDF file")
+    parser.add_argument(
+        "pages", help="pages to remove, numbered from 1: 92-100, 1,3,92-100 or 92- (to the end)"
+    )
+    parser.add_argument(
+        "output", type=Path, nargs="?",
+        help=f"output PDF file (default: <input>{TRIMMED_SUFFIX}.pdf)",
+    )  # fmt: skip
+    parser.add_argument(
+        "--no-scrub", action="store_true", help="keep links, attachments, scripts and hidden text"
+    )
+
+
+def _configure_flatten(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("input", type=Path, help="PDF file to flatten")
+    parser.add_argument(
+        "output", type=Path, nargs="?",
+        help=f"output PDF file (default: <input>{FLATTENED_SUFFIX}.pdf)",
+    )  # fmt: skip
+    parser.add_argument("--dpi", type=int, default=200, help="render resolution (default: 200)")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="redact-pdf",
@@ -76,36 +147,10 @@ def build_parser() -> argparse.ArgumentParser:
             "INPUT may be a directory for batch mode."
         ),
     )
-    p.add_argument("input", type=Path, help="PDF file or directory of PDFs")
-    p.add_argument(
-        "output", type=Path, nargs="?",
-        help=f"output file or directory (default: <input>{REDACTED_SUFFIX}.pdf)",
-    )  # fmt: skip
-    _add_match_args(p)
-    p.add_argument(
-        "--no-email-domains", dest="email_domains", action="store_false",
-        help="do not redact organisation names taken from email domains (acme from x@acme.com)",
-    )  # fmt: skip
-    p.add_argument(
-        "--no-email-names", dest="email_names", action="store_false",
-        help="do not redact person names taken from email addresses (display names, address parts)",
-    )  # fmt: skip
-    p.add_argument(
-        "--label", default=DEFAULT_LABEL, help=f"text inside each box (default: {DEFAULT_LABEL})"
-    )
-    p.add_argument("--no-label", action="store_true", help="plain black boxes without text")
-    p.add_argument(
-        "--no-scrub", action="store_true", help="keep links, attachments, scripts and hidden text"
-    )
-    p.add_argument(
-        "--keep-annotations", action="store_true",
-        help="keep comments and form fields interactive (their text is then not redacted)",
-    )  # fmt: skip
+    _configure_redact(p)
 
     p = sub.add_parser("verify", help="check a PDF's text layer for remaining matches")
-    p.add_argument("input", type=Path, help="PDF file to check")
-    _add_match_args(p)
-    p.add_argument("--label", default=DEFAULT_LABEL, help="label used during redaction")
+    _configure_verify(p)
 
     p = sub.add_parser(
         "apply-boxes",
@@ -117,18 +162,7 @@ def build_parser() -> argparse.ArgumentParser:
             f"OUTPUT defaults to <input>{APPLIED_SUFFIX}.pdf."
         ),
     )
-    p.add_argument("input", type=Path, help="the reviewed PDF")
-    p.add_argument(
-        "--annotations-only", action="store_true",
-        help="apply only annotation marks (e.g. Firefox blots); skip drawn-box detection for speed",
-    )  # fmt: skip
-    p.add_argument(
-        "output", type=Path, nargs="?",
-        help=f"output PDF file (default: <input>{APPLIED_SUFFIX}.pdf)",
-    )  # fmt: skip
-    p.add_argument(
-        "--no-scrub", action="store_true", help="keep links, attachments, scripts and hidden text"
-    )
+    _configure_apply_boxes(p)
 
     p = sub.add_parser(
         "remove-pages",
@@ -139,25 +173,10 @@ def build_parser() -> argparse.ArgumentParser:
             f"OUTPUT defaults to <input>{TRIMMED_SUFFIX}.pdf."
         ),
     )
-    p.add_argument("input", type=Path, help="PDF file")
-    p.add_argument(
-        "pages", help="pages to remove, numbered from 1: 92-100, 1,3,92-100 or 92- (to the end)"
-    )
-    p.add_argument(
-        "output", type=Path, nargs="?",
-        help=f"output PDF file (default: <input>{TRIMMED_SUFFIX}.pdf)",
-    )  # fmt: skip
-    p.add_argument(
-        "--no-scrub", action="store_true", help="keep links, attachments, scripts and hidden text"
-    )
+    _configure_remove_pages(p)
 
     p = sub.add_parser("flatten", help="burn in manual boxes by converting pages to images")
-    p.add_argument("input", type=Path, help="PDF file to flatten")
-    p.add_argument(
-        "output", type=Path, nargs="?",
-        help=f"output PDF file (default: <input>{FLATTENED_SUFFIX}.pdf)",
-    )  # fmt: skip
-    p.add_argument("--dpi", type=int, default=200, help="render resolution (default: 200)")
+    _configure_flatten(p)
 
     return parser
 
