@@ -1,5 +1,7 @@
 # redact-pdf
 
+![Animated courtroom scene with a pointing attorney](assets/redaction-courtroom.gif)
+
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue)
 ![License](https://img.shields.io/badge/license-AGPL--3.0-green)
 
@@ -20,7 +22,7 @@ Matched text is deleted from the file and replaced with labelled black boxes. Th
 | --- | --- |
 | **Deletes matched text** from the file and puts a labelled box in its place | A black rectangle drawn in a PDF editor only covers the text. Select, copy and paste still reveal it. |
 | **Matches whole words** across line breaks, end-of-line hyphens and accented spellings | A name split over two lines is otherwise missed, and a short term like "ETH" would otherwise damage "methodology". |
-| **Removes email addresses by default**, with the person and organisation names found in them | `lukas.koernich@acme.ch` gives away a name and an employer that also appear elsewhere, without the address. |
+| **Removes email addresses by default**, with the person and organisation names found in them | `lukas.koenig@acme.ch` gives away a name and an employer that also appear elsewhere, without the address. |
 | **Labels each box** `EMAIL`, `NAME`, `ORG` or `REDACTED` | Readers can still follow the document and see what kind of information was removed. |
 | **Strips metadata everywhere**: document info, XMP, EXIF in photos, application data, the document ID | Author, company, edit history and photo locations are stored outside the page text, mostly where common metadata tools don't look. |
 | **Redacts text outside the pages**: bookmarks, layer names, alternate text | These repeat what the pages say and survive a redaction that only looks at pages. |
