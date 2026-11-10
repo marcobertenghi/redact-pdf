@@ -224,6 +224,7 @@ exiftool -a -G1 in_REDACTED.pdf
 - **Text in images is not detected.** There is no OCR by design; use the [manual review workflow](../README.md#recommended-workflow).
 - **Inline images and stencil masks** (rare; mostly small icons and 1-bit scans) are not checked for hidden areas, nor is an image that a page uses only as a fill pattern. `flatten` re-renders everything if you need certainty.
 - **Vector text** (text converted to outlines, common in logos) is not text and is not found.
+- **Text can shift after a redaction.** The PDF engine closes part of the gap that removed text leaves, so the rest of that line moves left by about one letter per redaction. With several redactions on one line, a neighbouring word can end up under a box. Nothing is revealed by this; check such lines when you review the output.
 - **Drawings outside the visible page** (lines and shapes, not text or images) are left in the file.
 - **Exact matches only.** Line breaks, hyphenation and ligatures are handled, but letter-spaced text (`J o h n`) or a name split across table cells can prevent a match. Add fragments (e.g. the surname alone) as extra terms.
 - **Obfuscated emails** such as `name [at] example [dot] com` are not detected; add them as terms or a custom regex.

@@ -14,14 +14,23 @@ redact-pdf redact contract.pdf -t "John Smith" -t "ACME"
 
 Matched text is deleted from the file and replaced with labelled black boxes. The tool also cleans metadata and hidden content, then checks the saved output for remaining matches. Text inside images needs a manual review.
 
-## What it does
+## What it does, and why it matters
 
-- **Finds text:** whole-word terms, term files and regular expressions, including matches across line breaks and hyphenation.
-- **Removes emails by default:** also finds organisation and person names associated with those addresses, with a report to review.
-- **Says what it removed:** boxes are labelled `EMAIL`, `NAME` or `ORG` for what the tool found itself, and `REDACTED` for your own terms.
-- **Cleans beyond the page:** metadata, bookmarks, links, alternate text, cropped-off image areas, and text that is invisible or lies outside the visible page.
-- **Finishes manual redactions:** turns Firefox highlights and pen blots into real redactions, without rasterizing the pages.
-- **Handles larger jobs:** batch-process folders, remove page ranges, and verify the result.
+| It does | Why it matters |
+| --- | --- |
+| **Deletes matched text** from the file and puts a labelled box in its place | A black rectangle drawn in a PDF editor only covers the text. Select, copy and paste still reveal it. |
+| **Matches whole words** across line breaks, end-of-line hyphens and accented spellings | A name split over two lines is otherwise missed, and a short term like "ETH" would otherwise damage "methodology". |
+| **Removes email addresses by default**, with the person and organisation names found in them | `lukas.koernich@acme.ch` gives away a name and an employer that also appear elsewhere, without the address. |
+| **Labels each box** `EMAIL`, `NAME`, `ORG` or `REDACTED` | Readers can still follow the document and see what kind of information was removed. |
+| **Strips metadata everywhere**: document info, XMP, EXIF in photos, application data, the document ID | Author, company, edit history and photo locations are stored outside the page text, mostly where common metadata tools don't look. |
+| **Redacts text outside the pages**: bookmarks, layer names, alternate text | These repeat what the pages say and survive a redaction that only looks at pages. |
+| **Removes text nobody sees**: invisible OCR layers and text outside the visible page | Cropping a page hides content without deleting it, and any text extraction tool prints it. |
+| **Blanks hidden image areas**: cropped images and screenshots split across pages | The whole picture stays in the file, including the part under a box drawn on the other page. |
+| **Removes links, attachments and scripts**, and rewrites the whole file | Link targets expose internal addresses, and earlier versions of a page can otherwise be recovered. |
+| **Turns Firefox highlights and pen blots into real redactions** | Text inside images needs a human eye. Pages stay text instead of becoming pictures, so the file stays small and searchable. |
+| **Removes whole pages** with everything only they use | A page taken out of the page list can stay in the file through a bookmark or jump target. |
+| **Checks its own output** and exits non-zero if anything remains | You learn about a leftover before the recipient does, and scripts can rely on the exit code. |
+| **Runs locally**, with one dependency, and never overwrites the input | Sensitive documents don't leave your computer, and the original is always still there. |
 
 ## Install
 
@@ -87,6 +96,9 @@ redact-pdf redact ./documents ./redacted -f terms.txt
 
 # Add a case-insensitive regex
 redact-pdf redact in.pdf -r "(?i)project[- ]alpha"
+
+# Use one label in every box instead of EMAIL, NAME and ORG
+redact-pdf redact in.pdf -f terms.txt --single-label
 
 # Remove pages (1-based numbers, lists and ranges)
 redact-pdf remove-pages report.pdf 1,3,92-100
