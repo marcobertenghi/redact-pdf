@@ -16,6 +16,7 @@ import pymupdf
 
 from redact_pdf.metadata import MetadataReport, strip_metadata
 from redact_pdf.pdfstrings import redact_object_strings, strip_marked_content_text
+from redact_pdf.unseen import remove_unseen_text
 
 REDACTED_SUFFIX = "_REDACTED"
 
@@ -55,6 +56,17 @@ def check_output_path(input_path: Path, output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
 
+def remove_links(doc: pymupdf.Document) -> int:
+    """Delete every link annotation, whatever its action. Returns their number."""
+    removed = 0
+    for page in doc.pages():
+        for xref, kind, _ in page.annot_xrefs():
+            if kind == pymupdf.PDF_ANNOT_LINK:
+                page.delete_link({"xref": xref})
+                removed += 1
+    return removed
+
+
 def clean_and_save(
     data: bytes,
     dst: Path,
@@ -64,17 +76,24 @@ def clean_and_save(
 ) -> tuple[MetadataReport, Counter[str]]:
     """Remove hidden content and metadata from a serialised PDF and save it.
 
-    Runs ``scrub`` (links, attachments, scripts...), :func:`strip_metadata`
-    and removes alternate text in page content. ``strings``, if given,
-    rewrites text strings outside the pages. The file is fully rewritten, so
-    no earlier revision survives. Returns what was removed and the string
-    matches.
+    With ``scrub``, removes links, text no reader can see (invisible or
+    outside the visible page), attachments and scripts. Always runs
+    :func:`strip_metadata` and removes alternate text in page content.
+    ``strings``, if given, rewrites text strings outside the pages. The file
+    is fully rewritten, so no earlier revision survives. Returns what was
+    removed and the string matches.
     """
     with pymupdf.open("pdf", data) as doc:
+        unseen: Counter[str] = Counter()
         if scrub:
-            # Metadata is handled more thoroughly by strip_metadata().
-            doc.scrub(metadata=False, xml_metadata=False)
+            # Links and unseen text are removed here: PyMuPDF's own passes
+            # are several times slower and skip some link types. Metadata is
+            # handled more thoroughly by strip_metadata().
+            remove_links(doc)
+            unseen = remove_unseen_text(doc)
+            doc.scrub(metadata=False, xml_metadata=False, remove_links=False, hidden_text=False)
         metadata = strip_metadata(doc)
+        metadata.removed += unseen
         if n := strip_marked_content_text(doc):
             metadata.removed["alternate text in page content"] += n
         # Drop what scrubbing and the tag removal orphaned, so only strings

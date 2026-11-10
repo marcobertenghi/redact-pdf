@@ -25,6 +25,7 @@ redact-pdf/
 │   ├── document.py    # shared file handling, output paths and cleanup
 │   ├── boxes.py       # apply-boxes: manual boxes become real redactions
 │   ├── images.py      # image areas no page shows (cropped, off the page)
+│   ├── unseen.py      # text no reader sees: invisible, or outside the visible page
 │   ├── pages.py       # remove-pages: drop pages completely
 │   ├── matching.py    # finding terms by character position, email domains
 │   ├── names.py       # person names taken from email addresses

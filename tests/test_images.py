@@ -196,3 +196,28 @@ def test_plain_hidden_margin_is_not_rewritten(tmp_path: Path) -> None:
     pix.set_rect(pymupdf.IRect(0, 400, 200, 800), (255, 255, 255))  # nothing below the crop
     report = redact_pdf(cropped_image(tmp_path / "in.pdf", pix), tmp_path / "out.pdf")
     assert report.hidden_images == 0
+
+
+def test_text_outside_the_page_does_not_confuse_image_areas(tmp_path: Path) -> None:
+    """Off-page text shifts PyMuPDF's block numbers; each image must still be
+    judged by its own visible area. Both images here are fully shown."""
+    src = tmp_path / "in.pdf"
+    red = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 60, 40), False)
+    red.set_rect(red.irect, RED)
+    red.set_rect(pymupdf.IRect(8, 8, 28, 28), GREEN)  # not one plain colour
+    blue = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 50, 80), False)
+    blue.set_rect(blue.irect, BLUE)
+    blue.set_rect(pymupdf.IRect(12, 40, 36, 72), GREEN)
+    with pymupdf.open() as doc:
+        page = doc.new_page(width=400, height=400)
+        page.insert_text((-300, 100), "parked beside the page", fontsize=10)
+        page.insert_text((50, 40), "Contact: alice@example.com", fontsize=11)
+        page.insert_image(pymupdf.Rect(50, 100, 170, 180), pixmap=red)
+        page.insert_image(pymupdf.Rect(220, 200, 320, 360), pixmap=blue)
+        doc.save(src)
+    report = redact_pdf(src, tmp_path / "out.pdf")
+    assert report.hidden_images == 0
+    assert report.is_clean
+    with pymupdf.open(report.output) as doc:
+        seen = [colours(doc, xref) for _, xref in images(report.output)]
+    assert sorted(seen, key=sorted) == sorted([{RED, GREEN}, {BLUE, GREEN}], key=sorted)

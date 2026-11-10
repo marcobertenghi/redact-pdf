@@ -39,7 +39,7 @@ redact-pdf redact ./documents ./redacted -f terms.txt
 | `--label TEXT` | Text inside each box. Default: `REDACTED`. |
 | `--no-label` | Plain black boxes. |
 | `--keep-annotations` | Keep comments and form fields interactive (see below). |
-| `--no-scrub` | Keep links, attachments, scripts and hidden text. |
+| `--no-scrub` | Keep links, attachments, scripts and [hidden text](#hidden-text). Matches in hidden text are still redacted. |
 
 Terms are matched case-insensitively, for accented letters too (`Müller` also finds `MÜLLER`). Accented letters match however the PDF stores them: `ö` as one character or as `o` plus a combining accent, which looks identical but is different text. A space in a term matches any whitespace, including a line break, and words hyphenated at the end of a line are found (`Mül-` / `ler`). Terms match as **whole words**: `-t "ETH"` removes "ETH", "eth" and "ETH-Zurich", but leaves "methodology", "Whether" and "ethz" intact. Letters, digits and combining accents prevent a word boundary; punctuation and underscores separate words. This applies to `-t`, term files and `verify`, including text outside the pages. Listing both `John Smith` and `Smith` works as expected.
 
@@ -88,7 +88,7 @@ With `--keep-annotations` they stay interactive, and their authors and timestamp
 redact-pdf verify in_REDACTED.pdf -f terms.txt
 ```
 
-Searches the text of every page and lists any remaining matches, including email addresses unless `--no-email` is given. Text strings outside the pages (metadata, bookmarks, layer names, link targets and so on) are checked too and listed as `outside page text`. Images that still hold content in areas no page shows are listed as `image content outside the visible page` ([details](#hidden-image-areas)). Useful after manual edits or on files redacted with other tools.
+Searches the text of every page, including [text outside the visible page](#hidden-text), and lists any remaining matches, including email addresses unless `--no-email` is given. Text strings outside the pages (metadata, bookmarks, layer names, link targets and so on) are checked too and listed as `outside page text`. Images that still hold content in areas no page shows are listed as `image content outside the visible page` ([details](#hidden-image-areas)). Useful after manual edits or on files redacted with other tools.
 
 ## `apply-boxes`: make manual boxes real
 
@@ -178,6 +178,17 @@ Metadata is stripped on every `redact` run, directly in Python; no external tool
 
 JPEG images are cleaned losslessly: the compressed image data is copied byte for byte, and only metadata segments are dropped. Colour profiles needed for correct rendering are kept.
 
+### Hidden text
+
+Two kinds of text are in the file without showing on any page, and a text extraction tool prints both:
+
+- **Invisible text**, drawn without ink or fully transparent. The usual case is the text layer that OCR puts over a scan.
+- **Text outside the visible page.** Cropping a page in a PDF editor only narrows the visible area and leaves the content where it was. Presentation and layout programs also export what was parked next to the page, and a line can run past the page edge.
+
+Such text is searched like any other, so matches in it are redacted and `verify` reports them. Because nobody can review the rest, `redact`, `apply-boxes` and `remove-pages` then delete all of it, unless `--no-scrub` is given. The report lists the number of affected pages. What the pages show does not change: a line running off the page keeps every character that is at least partly visible.
+
+All links are removed as well, whatever they do: web links, jumps within the document, and actions such as opening a file.
+
 ### Hidden image areas
 
 A page often shows only part of a stored image. Word, browsers and Confluence crop images by hiding part of them, and a long screenshot split across two pages is usually stored *whole* with each page, each showing its half. The hidden part is still in the file, and any PDF tool can extract it (`pdfimages -all file.pdf`).
@@ -195,8 +206,9 @@ exiftool -a -G1 in_REDACTED.pdf
 ## Limitations
 
 - **Text in images is not detected.** There is no OCR by design; use the [manual review workflow](../README.md#recommended-workflow).
-- **Inline images and stencil masks** (rare; mostly small icons and 1-bit scans) are not checked for hidden areas. `flatten` re-renders everything if you need certainty.
+- **Inline images and stencil masks** (rare; mostly small icons and 1-bit scans) are not checked for hidden areas, nor is an image that a page uses only as a fill pattern. `flatten` re-renders everything if you need certainty.
 - **Vector text** (text converted to outlines, common in logos) is not text and is not found.
+- **Drawings outside the visible page** (lines and shapes, not text or images) are left in the file.
 - **Exact matches only.** Line breaks, hyphenation and ligatures are handled, but letter-spaced text (`J o h n`) or a name split across table cells can prevent a match. Add fragments (e.g. the surname alone) as extra terms.
 - **Obfuscated emails** such as `name [at] example [dot] com` are not detected; add them as terms or a custom regex.
 - **Spelling variants are not matched.** `Müller` does not find `Mueller`, and `Straße` does not find `STRASSE`; list the variants you expect.

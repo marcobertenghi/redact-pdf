@@ -20,6 +20,7 @@ import pymupdf
 
 __all__ = [
     "EMAIL_PATTERN",
+    "EVERYWHERE",
     "FREEMAIL_DOMAINS",
     "Matcher",
     "PageText",
@@ -76,13 +77,12 @@ Their names are not added as terms: ``web.de`` would otherwise remove every
 # Second-level labels used under country-code TLDs: acme.co.uk -> acme
 _SECOND_LEVEL = frozenset({"ac", "co", "com", "edu", "gov", "gv", "ltd", "net", "or", "org", "plc"})
 
-# Text extraction flags: keep whitespace, ignore text outside the page, expand
-# ligatures into separate letters (so "fi" in a term matches the "ﬁ" glyph).
-TEXT_FLAGS: int = (
-    pymupdf.TEXT_PRESERVE_WHITESPACE
-    | pymupdf.TEXT_MEDIABOX_CLIP
-    | pymupdf.TEXT_CID_FOR_UNKNOWN_UNICODE
-)
+# Text extraction flags: keep whitespace, expand ligatures into separate
+# letters (so "fi" in a term matches the "ﬁ" glyph).
+TEXT_FLAGS: int = pymupdf.TEXT_PRESERVE_WHITESPACE | pymupdf.TEXT_CID_FOR_UNKNOWN_UNICODE
+EVERYWHERE = pymupdf.Rect(-1e6, -1e6, 1e6, 1e6)
+"""Extraction area that includes text outside the visible page: cropped-off
+or beyond the page edge, it is still in the file and must be searched too."""
 _LINE_END_HYPHENS = "-\u00ad\u2010"  # hyphen-minus, soft hyphen, hyphen
 
 
@@ -261,6 +261,7 @@ class _TextVariant(NamedTuple):
 class PageText:
     """A page's text with one bounding box per character.
 
+    Text outside the visible page is included; it is still in the file.
     Matching runs on two renderings of the text: as laid out (lines joined
     by newlines), and with words hyphenated at a line end joined back
     together, so "Mül-" + "ler" is found by the term "Müller".
@@ -272,7 +273,7 @@ class PageText:
         self.line_of: list[int] = []
         lines: list[tuple[int, int]] = []  # (start, end) character indices
 
-        raw = page.get_text("rawdict", flags=TEXT_FLAGS)
+        raw = page.get_text("rawdict", clip=EVERYWHERE, flags=TEXT_FLAGS)
         for block in raw["blocks"]:
             for line in block.get("lines", ()):
                 start = len(self.chars)

@@ -177,7 +177,8 @@ def apply_boxes(
                 report.ignored[page_no] = ignored
             if not boxes:
                 continue
-            hidden[page_no] = [_hidden_chars(page, box.rect) for box in boxes]
+            chars = _chars(page)
+            hidden[page_no] = [_hidden_chars(chars, box.rect) for box in boxes]
             _redact(page, boxes)
             if drawn:
                 report.drawn[page_no] = len(drawn)
@@ -205,13 +206,22 @@ def _redact(page: pymupdf.Page, boxes: Sequence[_Box]) -> None:
     therefore delete what they touch; boxes crossed by a longer drawing (a
     table border) only delete what they cover, so the border stays.
     """
-    painted = [_painted_rect(d) for d in page.get_drawings()]
+    # Plain numbers: every box meets every drawing, where Rect objects are slow.
+    painted = [
+        (r.x0, r.y0, r.x1, r.y1, r.get_area())
+        for r in map(_painted_rect, page.get_drawings())
+        if not r.is_empty
+    ]
     passes: dict[int, list[_Box]] = {}
     for box in boxes:
-        touching = [r for r in painted if r.intersects(box.rect)]
-        contained = all(
-            (r & box.rect).get_area() >= _MOSTLY_INSIDE * r.get_area() for r in touching
-        )
+        bx0, by0, bx1, by1 = box.rect.x0, box.rect.y0, box.rect.x1, box.rect.y1
+        contained = True
+        for x0, y0, x1, y1, area in painted:
+            width = min(x1, bx1) - max(x0, bx0)
+            height = min(y1, by1) - max(y0, by0)
+            if width > 0 and height > 0 and width * height < _MOSTLY_INSIDE * area:
+                contained = False
+                break
         mode = (
             pymupdf.PDF_REDACT_LINE_ART_REMOVE_IF_TOUCHED
             if contained
@@ -400,8 +410,8 @@ _Char = tuple[str, tuple[float, float, float, float]]
 """A character and its rounded position."""
 
 
-def _chars(page: pymupdf.Page, clip: pymupdf.Rect | None = None) -> set[_Char]:
-    raw = page.get_text("rawdict", clip=clip)
+def _chars(page: pymupdf.Page) -> set[_Char]:
+    raw = page.get_text("rawdict")
     return {
         (char["c"], tuple(round(v, 1) for v in char["bbox"]))
         for block in raw["blocks"]
@@ -412,12 +422,14 @@ def _chars(page: pymupdf.Page, clip: pymupdf.Rect | None = None) -> set[_Char]:
     }
 
 
-def _hidden_chars(page: pymupdf.Page, rect: pymupdf.Rect) -> set[_Char]:
-    """Characters whose centre lies inside ``rect``, i.e. hidden by a box there."""
+def _hidden_chars(chars: set[_Char], rect: pymupdf.Rect) -> set[_Char]:
+    """Those of a page's ``chars`` whose centre lies inside ``rect``, i.e.
+    hidden by a box there."""
+    x0, y0, x1, y1 = rect.x0, rect.y0, rect.x1, rect.y1
     return {
         (c, box)
-        for c, box in _chars(page, rect)
-        if rect.contains(pymupdf.Point((box[0] + box[2]) / 2, (box[1] + box[3]) / 2))
+        for c, box in chars
+        if x0 <= (box[0] + box[2]) / 2 <= x1 and y0 <= (box[1] + box[3]) / 2 <= y1
     }
 
 

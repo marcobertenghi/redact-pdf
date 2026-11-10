@@ -95,35 +95,44 @@ def hidden_image_pages(doc: pymupdf.Document) -> dict[int, int]:
 def _placements(doc: pymupdf.Document) -> _Placements:
     """Where each image is drawn, as the visible part of the image's unit square.
 
-    ``get_image_info`` gives each drawn image's transform and size; the
-    "blocks" text output gives its visible box, clipped by clip paths and the
-    page, under the same block number. The image's xref is found by its size,
-    which is nearly always unique; only when two images share a size does
-    MuPDF compare image hashes, which is slow on pages with many images.
+    MuPDF's text page lists every drawn image with its size, its transform
+    and its visible box, clipped by clip paths and the page. The image's
+    xref is found by its size, which is nearly always unique; only when two
+    images share a size are their contents compared, which is slow.
     """
     by_size = _xrefs_by_size(doc)
+    digest_of: dict[int, bytes] = {}
     found: _Placements = defaultdict(list)
     for page in doc.pages():
-        infos = page.get_image_info()
-        if not infos:
+        # Most pages have no image, and asking MuPDF where images are drawn
+        # means interpreting the whole page.
+        if not page.get_images(full=True):
             continue
-        # Without the clip flag, MuPDF reports no image blocks at all.
-        flags = pymupdf.TEXT_PRESERVE_IMAGES | pymupdf.TEXT_MEDIABOX_CLIP
-        shown = {b[5]: pymupdf.Rect(b[:4]) for b in page.get_text("blocks", flags=flags) if b[6]}
-        hashed: dict[int, int] | None = None
-        for info in infos:
+        # The clip flag makes the reported box the visible one. Box and
+        # transform must come from the same list: block numbers differ
+        # between PyMuPDF's outputs.
+        textpage = page.get_textpage(
+            flags=pymupdf.TEXT_PRESERVE_IMAGES | pymupdf.TEXT_MEDIABOX_CLIP
+        )
+        hashed: dict[int, bytes] | None = None
+        for info in textpage.extractIMGINFO():
             candidates = by_size.get((info["width"], info["height"]), [])
             if len(candidates) > 1:  # same size: tell them apart by content
                 if hashed is None:
-                    hashed = {i["number"]: i["xref"] for i in page.get_image_info(xrefs=True)}
-                candidates = [hashed.get(info["number"], 0)]
+                    hashed = {
+                        i["number"]: i["digest"] for i in textpage.extractIMGINFO(hashes=True)
+                    }
+                for xref in candidates:
+                    if xref not in digest_of:
+                        digest_of[xref] = pymupdf.Pixmap(doc, xref).digest
+                candidates = [x for x in candidates if digest_of[x] == hashed[info["number"]]][:1]
             xref = candidates[0] if candidates else 0  # 0: inline image
             if xref <= 0 or _is_stencil(doc, xref):
                 continue
             matrix = pymupdf.Matrix(info["transform"])
             if abs(matrix.a * matrix.d - matrix.b * matrix.c) < 1e-9:
                 continue  # degenerate: drawn with no area
-            visible = shown.get(info["number"], pymupdf.Rect())
+            visible = pymupdf.Rect(info["bbox"])  # empty if nothing of it is shown
             unit = (visible * ~matrix).normalize() if not visible.is_empty else pymupdf.Rect()
             found[xref].append((page.number + 1, unit & pymupdf.Rect(0, 0, 1, 1)))
     return dict(found)
