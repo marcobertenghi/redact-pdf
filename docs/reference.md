@@ -36,7 +36,8 @@ redact-pdf redact ./documents ./redacted -f terms.txt
 | `--no-email` | Don't redact email addresses (they are redacted by default). |
 | `--no-email-domains` | Don't redact organisation names taken from email domains (see below). |
 | `--no-email-names` | Don't redact person names taken from email addresses (see below). |
-| `--label TEXT` | Text inside each box. Default: `REDACTED`. |
+| `--label TEXT` | Text inside the boxes of your terms and regexes. Default: `REDACTED`. See [labels](#labels). |
+| `--single-label` | Use the `--label` text in every box instead of `EMAIL`, `NAME` and `ORG`. |
 | `--no-label` | Plain black boxes. |
 | `--keep-annotations` | Keep comments and form fields interactive (see below). |
 | `--no-scrub` | Keep links, attachments, scripts and [hidden text](#hidden-text). Matches in hidden text are still redacted. |
@@ -48,6 +49,21 @@ Regular expressions are applied as written: they are case-sensitive unless you a
 For intentional matching inside longer words, use a regular expression: `-r "(?i)Smith"` also removes the "Smith" in "Smithson".
 
 The input file is never modified; an existing output file is overwritten. In batch mode, files already ending in `_REDACTED` are skipped, so running the same command twice is safe.
+
+### Labels
+
+Each box says what kind of text it replaced:
+
+| What was matched | Label |
+| --- | --- |
+| Your terms (`-t`, `-f`) and regexes (`-r`) | `REDACTED`, or the `--label` text |
+| Email addresses | `EMAIL` |
+| Person names taken from email addresses | `NAME` |
+| Organisation names taken from email domains | `ORG` |
+
+The same labels replace matches in bookmarks and other text outside the pages. Where several kinds match the same text, the longest match decides, and among equal ones your own term: listing `Acme` yourself labels it `REDACTED` even if it is also found from an email domain.
+
+A label is drawn only if it fits its box at a readable size; otherwise the box stays plain black. `--single-label` puts the `--label` text in every box, and `--no-label` leaves all boxes plain. `verify` ignores label text, so a label is never reported as a leftover.
 
 ### Built-in email detection
 

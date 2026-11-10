@@ -12,18 +12,23 @@ from __future__ import annotations
 import re
 import unicodedata
 from collections import Counter
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import NamedTuple
 
 import pymupdf
 
 __all__ = [
+    "EMAIL",
     "EMAIL_PATTERN",
     "EVERYWHERE",
     "FREEMAIL_DOMAINS",
+    "NAME",
+    "ORG",
+    "TERM",
     "Matcher",
     "PageText",
+    "Span",
     "build_matchers",
     "email_domain_term",
     "find_in_text",
@@ -86,6 +91,13 @@ or beyond the page edge, it is still in the file and must be searched too."""
 _LINE_END_HYPHENS = "-\u00ad\u2010"  # hyphen-minus, soft hyphen, hyphen
 
 
+# What a match is. Each kind can get its own redaction label.
+TERM = "term"  # a term or regex supplied by the user
+EMAIL = "email"  # an email address
+NAME = "name"  # a person's name taken from an email address
+ORG = "org"  # an organisation's name taken from an email domain
+
+
 @dataclass(frozen=True)
 class Matcher:
     """A compiled pattern plus the name used for its matches in reports.
@@ -93,11 +105,14 @@ class Matcher:
     ``key=None`` reports the matched text itself (used for regexes and emails).
     ``capitalised=True`` only accepts matches starting with an uppercase
     letter, as names are written (used for names taken from email addresses).
+    ``kind`` is what the pattern finds: :data:`TERM`, :data:`EMAIL`,
+    :data:`NAME` or :data:`ORG`.
     """
 
     pattern: re.Pattern[str]
     key: str | None = None
     capitalised: bool = False
+    kind: str = TERM
 
     def name(self, match: re.Match[str]) -> str:
         return self.key if self.key is not None else " ".join(match.group(0).split())
@@ -131,7 +146,7 @@ def whole_word(body: str) -> str:
     return rf"(?<![^\W_])(?<![\u0300-\u036f]){body}(?![^\W_]|[\u0300-\u036f])"
 
 
-def term_matcher(term: str, *, whole_word_only: bool = True) -> Matcher:
+def term_matcher(term: str, *, whole_word_only: bool = True, kind: str = TERM) -> Matcher:
     """Case-insensitive literal match, bounded by whole words by default.
 
     Any whitespace in ``term`` also matches line breaks and repeated spaces,
@@ -141,7 +156,7 @@ def term_matcher(term: str, *, whole_word_only: bool = True) -> Matcher:
     body = r"\s+".join(map(_literal, term.split()))
     if whole_word_only:
         body = whole_word(body)
-    return Matcher(re.compile(body, re.IGNORECASE), term)
+    return Matcher(re.compile(body, re.IGNORECASE), term, kind=kind)
 
 
 def build_matchers(
@@ -150,7 +165,7 @@ def build_matchers(
     matchers = [term_matcher(t) for t in normalise_terms(terms)]
     matchers += [Matcher(p if isinstance(p, re.Pattern) else re.compile(p)) for p in patterns]
     if emails:
-        matchers.append(Matcher(EMAIL_PATTERN))
+        matchers.append(Matcher(EMAIL_PATTERN, kind=EMAIL))
     return matchers
 
 
@@ -172,23 +187,31 @@ def email_domain_term(address: str) -> str | None:
     return name
 
 
-Span = tuple[str, int, int]
-"""``(name, start, end)`` of a match."""
+class Span(NamedTuple):
+    """A match: its name in reports, its position and its kind."""
+
+    name: str
+    start: int
+    end: int
+    kind: str = TERM
 
 
-def _protected(text: str, protect: str | None) -> list[tuple[int, int]]:
-    if not protect:
-        return []
-    return [(m.start(), m.end()) for m in re.finditer(re.escape(protect), text)]
+def _protected(text: str, protect: Iterable[str]) -> list[tuple[int, int]]:
+    return [
+        (m.start(), m.end())
+        for label in protect
+        if label
+        for m in re.finditer(re.escape(label), text)
+    ]
 
 
 def _inside(start: int, end: int, ranges: Sequence[tuple[int, int]]) -> bool:
     return any(lo <= start and end <= hi for lo, hi in ranges)
 
 
-def find_in_text(text: str, matchers: Sequence[Matcher], protect: str | None = None) -> list[Span]:
+def find_in_text(text: str, matchers: Sequence[Matcher], protect: Iterable[str] = ()) -> list[Span]:
     """All non-blank matches in ``text``. Matches lying entirely inside an
-    occurrence of ``protect`` (the redaction label) are ignored."""
+    occurrence of one of ``protect`` (the redaction labels) are ignored."""
     protected = _protected(text, protect)
     spans: list[Span] = []
     for matcher in matchers:
@@ -196,52 +219,57 @@ def find_in_text(text: str, matchers: Sequence[Matcher], protect: str | None = N
             if matcher.capitalised and not m.group(0)[:1].isupper():
                 continue
             if m.group(0).strip() and not _inside(m.start(), m.end(), protected):
-                spans.append((matcher.name(m), m.start(), m.end()))
+                spans.append(Span(matcher.name(m), m.start(), m.end(), matcher.kind))
     return spans
 
 
-def select(spans: Iterable[Span]) -> tuple[Counter[str], set[int]]:
+def select(spans: Iterable[Span]) -> tuple[Counter[str], dict[int, str]]:
     """Merge overlapping matches.
 
-    Returns the per-name counts and the set of covered positions. Longer
-    matches are taken first; a match entirely inside an earlier one (e.g.
-    "Smith" inside "John Smith") is not counted separately.
+    Returns the per-name counts and the covered positions with the kind of
+    match covering each. Longer matches are taken first, and among equal
+    ones the first given, so a user's own term decides before anything the
+    tool derived. A match entirely inside an earlier one (e.g. "Smith"
+    inside "John Smith") is not counted separately.
     """
     counts: Counter[str] = Counter()
-    covered: set[int] = set()
-    for name, start, end in sorted(spans, key=lambda s: (s[1] - s[2], s[1])):
-        positions = set(range(start, end))
-        if not positions <= covered:
+    covered: dict[int, str] = {}
+    for name, start, end, kind in sorted(spans, key=lambda s: (s.start - s.end, s.start)):
+        new = [p for p in range(start, end) if p not in covered]
+        if new:
             counts[name] += 1
-            covered |= positions
+            covered.update(dict.fromkeys(new, kind))
     return counts, covered
 
 
-def _runs(positions: Iterable[int]) -> list[tuple[int, int]]:
-    """Group sorted positions into ``[start, end)`` runs of consecutive values."""
-    runs: list[tuple[int, int]] = []
-    for p in sorted(positions):
-        if runs and runs[-1][1] == p:
-            runs[-1] = (runs[-1][0], p + 1)
+def _runs(covered: Mapping[int, str]) -> list[tuple[int, int, str]]:
+    """Group positions into ``(start, end, kind)`` runs of consecutive values
+    of one kind."""
+    runs: list[tuple[int, int, str]] = []
+    for p in sorted(covered):
+        kind = covered[p]
+        if runs and runs[-1][1] == p and runs[-1][2] == kind:
+            runs[-1] = (runs[-1][0], p + 1, kind)
         else:
-            runs.append((p, p + 1))
+            runs.append((p, p + 1, kind))
     return runs
 
 
 def redact_text(
-    text: str, matchers: Sequence[Matcher], replacement: str
+    text: str, matchers: Sequence[Matcher], labels: Mapping[str, str]
 ) -> tuple[str, Counter[str]]:
-    """Replace every match (merged into runs) by ``replacement``.
+    """Replace every match (merged into runs) by the label of its kind.
 
-    Existing occurrences of ``replacement`` are left alone, so running twice
-    does not nest labels. Returns the new text and the per-name counts.
+    ``labels`` maps each kind of match to its replacement. Existing
+    occurrences of a label are left alone, so running twice does not nest
+    labels. Returns the new text and the per-name counts.
     """
-    counts, covered = select(find_in_text(text, matchers, protect=replacement))
+    counts, covered = select(find_in_text(text, matchers, protect=set(labels.values())))
     if not covered:
         return text, counts
     out, pos = [], 0
-    for start, end in _runs(covered):
-        out += [text[pos:start], replacement]
+    for start, end, kind in _runs(covered):
+        out += [text[pos:start], labels[kind]]
         pos = end
     out.append(text[pos:])
     return "".join(out), counts
@@ -322,30 +350,31 @@ class PageText:
                 index.append(-1)
         return _TextVariant("".join(text), index)
 
-    def find(self, matchers: Sequence[Matcher], protect: str | None = None) -> list[Span]:
-        """Matches as ``(name, first_char, end_char)`` in character indices."""
-        found: dict[tuple[int, int], str] = {}
+    def find(self, matchers: Sequence[Matcher], protect: Iterable[str] = ()) -> list[Span]:
+        """Matches with their first and end character index on the page."""
+        found: dict[tuple[int, int], tuple[str, str]] = {}
         for variant in self.variants:
-            for name, start, end in find_in_text(variant.text, matchers, protect):
+            for name, start, end, kind in find_in_text(variant.text, matchers, protect):
                 chars = [i for i in variant.char_indices[start:end] if i >= 0]
                 if chars:
-                    found.setdefault((chars[0], chars[-1] + 1), name)
-        return [(name, start, end) for (start, end), name in found.items()]
+                    found.setdefault((chars[0], chars[-1] + 1), (name, kind))
+        return [Span(name, start, end, kind) for (start, end), (name, kind) in found.items()]
 
-    def rects(self, covered: Iterable[int]) -> list[pymupdf.Rect]:
-        """One rectangle per run of consecutive covered characters on a line.
+    def rects(self, covered: Mapping[int, str]) -> list[tuple[pymupdf.Rect, str]]:
+        """One rectangle, with its kind of match, per run of consecutive
+        covered characters of one kind on a line.
 
         Whitespace at either end of a run does not widen the rectangle.
         """
-        rects: list[pymupdf.Rect] = []
-        for start, end in _runs(covered):
+        rects: list[tuple[pymupdf.Rect, str]] = []
+        for start, end, kind in _runs(covered):
             run: list[int] = []
             for i in range(start, end):
                 if run and self.line_of[i] != self.line_of[run[0]]:
-                    rects += self._box(run)
+                    rects += [(rect, kind) for rect in self._box(run)]
                     run = []
                 run.append(i)
-            rects += self._box(run)
+            rects += [(rect, kind) for rect in self._box(run)]
         return rects
 
     def _box(self, run: Sequence[int]) -> list[pymupdf.Rect]:

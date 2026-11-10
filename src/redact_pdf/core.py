@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -25,7 +25,11 @@ from redact_pdf.document import (
 from redact_pdf.document import clean_and_save as clean_and_save
 from redact_pdf.images import HIDDEN_IMAGE, blank_hidden_image_areas, hidden_image_pages
 from redact_pdf.matching import (
+    EMAIL,
     EMAIL_PATTERN,
+    NAME,
+    ORG,
+    TERM,
     Matcher,
     PageText,
     build_matchers,
@@ -44,6 +48,7 @@ __all__ = [
     "DOCUMENT_LEVEL",
     "EMAIL_PATTERN",
     "FLATTENED_SUFFIX",
+    "KIND_LABELS",
     "REDACTED_SUFFIX",
     "RedactionError",
     "RedactionReport",
@@ -57,6 +62,12 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 DEFAULT_LABEL = "REDACTED"
+"""Label for the user's own terms and regexes."""
+KIND_LABELS = {EMAIL: "EMAIL", NAME: "NAME", ORG: "ORG"}
+"""Labels for what the tool finds by itself: email addresses, and the person
+and organisation names taken from them."""
+UNLABELLED = "***"
+"""Replaces matches in text strings outside the pages when boxes have no label."""
 FLATTENED_SUFFIX = "_FLATTENED"
 LABEL_FONT = "helv"
 MIN_LABEL_FONTSIZE = 4.0
@@ -138,13 +149,16 @@ def redact_pdf(
     email_domains: bool = True,
     email_names: bool = True,
     label: str | None = DEFAULT_LABEL,
+    kind_labels: bool = True,
     scrub: bool = True,
     keep_annotations: bool = False,
 ) -> RedactionReport:
     """Permanently remove terms and regex matches from a PDF.
 
     Matched text is deleted from the content stream (not just covered) and
-    replaced by a black box containing ``label``. Image pixels under a box are
+    replaced by a black box with a label saying what was there: ``label``
+    for your terms and regexes, and EMAIL, NAME or ORG for email addresses
+    and the names taken from them. Image pixels under a box are
     blanked, as are image areas that no page shows (cropped off, or off the
     page; see :mod:`redact_pdf.images`). Matches are also replaced in
     bookmark titles and other text strings outside the pages (layer names,
@@ -172,7 +186,11 @@ def redact_pdf(
             display name in ``Lukas Körnich <lk@acme.ch>`` and the parts of
             the address itself (``lukas.koernich@`` -> "lukas", "koernich",
             matched accent-insensitively). Best effort; see :mod:`redact_pdf.names`.
-        label: Text shown in each box, or ``None`` for plain black boxes.
+        label: Text shown in the boxes of your terms and regexes, or ``None``
+            for plain black boxes everywhere.
+        kind_labels: Label email addresses, person names and organisation
+            names as EMAIL, NAME and ORG (:data:`KIND_LABELS`). If false,
+            every box shows ``label``.
         scrub: Also remove links, attachments, scripts and other hidden content.
         keep_annotations: Keep annotations and form fields interactive instead
             of baking them. Their visible text is then not redacted.
@@ -192,6 +210,8 @@ def redact_pdf(
         raise ValueError("Nothing to match: provide terms or patterns, or enable emails.")
     check_output_path(src, dst)
 
+    labels = _labels(label, kind_labels)
+    replacements = {kind: text or UNLABELLED for kind, text in labels.items()}
     report = RedactionReport(output=dst)
     with open_pdf(src) as doc:
         if not keep_annotations:
@@ -207,14 +227,14 @@ def redact_pdf(
                 matchers += names.matchers
             if email_domains:
                 report.domain_terms = _domain_terms(doc_text)
-                matchers += [term_matcher(t, whole_word_only=True) for t in report.domain_terms]
+                matchers += [term_matcher(t, kind=ORG) for t in report.domain_terms]
 
         for page in doc:
             page_no = page.number + 1
             text = PageText(page)
             counts, covered = select(text.find(matchers))
-            for rect in text.rects(covered):
-                _add_box(page, rect, label)
+            for rect, kind in text.rects(covered):
+                _add_box(page, rect, labels[kind])
             if counts:
                 report.hits[page_no] = dict(counts)
 
@@ -224,21 +244,20 @@ def redact_pdf(
             if n_images := len(page.get_images(full=True)):
                 report.image_pages[page_no] = n_images
 
-        report.bookmarks = _redact_outline(doc, matchers, label)
+        report.bookmarks = _redact_outline(doc, matchers, replacements)
         # After redaction: a box blanks pixels only in that page's copy of an image.
         report.hidden_images = blank_hidden_image_areas(doc)
         # Serialise once to drop objects orphaned by baking and redaction, so the
         # passes below only see (and report) what is really in the file.
         data = doc.tobytes(garbage=4, deflate=True)
 
-    replacement = label or "***"
     report.metadata, hidden = clean_and_save(
-        data, dst, scrub=scrub, strings=lambda s: redact_text(s, matchers, replacement)
+        data, dst, scrub=scrub, strings=lambda s: redact_text(s, matchers, replacements)
     )
     report.hidden_text = dict(hidden)
 
     logger.info("Wrote %s with %d redaction(s)", dst, report.total)
-    report.leftovers = _verify(dst, matchers, label)
+    report.leftovers = _verify(dst, matchers, labels.values())
     if report.leftovers:
         logger.info("Terms still present in %s: %s", dst, report.leftovers)
     return report
@@ -267,13 +286,22 @@ def _domain_terms(text: str) -> dict[str, str]:
     return terms
 
 
-def _redact_outline(doc: pymupdf.Document, matchers: Sequence[Matcher], label: str | None) -> int:
+def _labels(label: str | None, kind_labels: bool) -> dict[str, str | None]:
+    """The box label for each kind of match."""
+    labels: dict[str, str | None] = dict.fromkeys((TERM, EMAIL, NAME, ORG), label)
+    if label is not None and kind_labels:
+        labels.update(KIND_LABELS)
+    return labels
+
+
+def _redact_outline(
+    doc: pymupdf.Document, matchers: Sequence[Matcher], replacements: Mapping[str, str]
+) -> int:
     """Replace matches in bookmark titles. Returns the number of changed titles."""
     toc = doc.get_toc(simple=False)
-    replacement = label or "***"
     changed = 0
     for entry in toc:
-        title, counts = redact_text(entry[1], matchers, replacement)
+        title, counts = redact_text(entry[1], matchers, replacements)
         if counts:
             entry[1] = title
             changed += 1
@@ -310,30 +338,36 @@ def verify_pdf(
     Checks the text of every page, and every text string and XMP packet
     outside the pages (reported under page :data:`DOCUMENT_LEVEL`, 0).
     Email addresses are checked too unless ``emails=False``. Matches inside a
-    redaction ``label`` (e.g. a term like "act" inside "REDACTED") are
-    ignored. Text inside images is not checked, but images with content in
-    areas no page shows are reported as :data:`HIDDEN_IMAGE` on their pages.
+    redaction label (e.g. a term like "act" inside "REDACTED") are ignored:
+    inside ``label``, and inside EMAIL, NAME and ORG. Text inside images is
+    not checked, but images with content in areas no page shows are reported
+    as :data:`HIDDEN_IMAGE` on their pages.
 
     Returns:
         ``{page_number: [matched_text, ...]}``; empty if clean.
     """
-    return _verify(Path(path), build_matchers(terms, patterns, emails=emails), label)
+    matchers = build_matchers(terms, patterns, emails=emails)
+    return _verify(Path(path), matchers, (label, *KIND_LABELS.values()))
 
 
-def _verify(path: Path, matchers: Sequence[Matcher], label: str | None) -> dict[int, list[str]]:
+def _verify(
+    path: Path, matchers: Sequence[Matcher], labels: Iterable[str | None]
+) -> dict[int, list[str]]:
+    """Matches left in ``path``, ignoring those inside one of ``labels``."""
+    on_pages = {label for label in labels if label}
     found: dict[int, list[str]] = {}
     with open_pdf(path) as doc:
         for page in doc:
-            hits = PageText(page).find(matchers, protect=label)
+            hits = PageText(page).find(matchers, protect=on_pages)
             if hits:
-                found[page.number + 1] = sorted({name for name, _, _ in hits})
+                found[page.number + 1] = sorted({hit.name for hit in hits})
         for page_no in hidden_image_pages(doc):
             found.setdefault(page_no, []).append(HIDDEN_IMAGE)
 
         outside = {
             name
             for _, text in _document_level_text(doc)
-            for name, _, _ in find_in_text(text, matchers, protect=label or "***")
+            for name, *_ in find_in_text(text, matchers, protect=on_pages | {UNLABELLED})
         }
         if outside:
             found[DOCUMENT_LEVEL] = sorted(outside)

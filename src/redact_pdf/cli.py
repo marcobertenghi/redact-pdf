@@ -15,6 +15,7 @@ from redact_pdf.core import (
     DEFAULT_LABEL,
     DOCUMENT_LEVEL,
     FLATTENED_SUFFIX,
+    KIND_LABELS,
     REDACTED_SUFFIX,
     RedactionReport,
     flatten_pdf,
@@ -24,6 +25,8 @@ from redact_pdf.core import (
 )
 from redact_pdf.document import RedactionError, default_output_path
 from redact_pdf.pages import TRIMMED_SUFFIX, PageRemovalReport, remove_pages
+
+_KIND_LABELS = ", ".join(KIND_LABELS.values())
 
 EXIT_OK = 0
 EXIT_LEFTOVERS = 1
@@ -73,8 +76,14 @@ def _configure_redact(parser: argparse.ArgumentParser) -> None:
         help="do not redact person names taken from email addresses (display names, address parts)",
     )  # fmt: skip
     parser.add_argument(
-        "--label", default=DEFAULT_LABEL, help=f"text inside each box (default: {DEFAULT_LABEL})"
-    )
+        "--label", default=DEFAULT_LABEL,
+        help=f"text inside the boxes of your terms and regexes (default: {DEFAULT_LABEL}); "
+        f"emails and the names taken from them are labelled {_KIND_LABELS}",
+    )  # fmt: skip
+    parser.add_argument(
+        "--single-label", action="store_true",
+        help=f"use the --label text in every box instead of {_KIND_LABELS}",
+    )  # fmt: skip
     parser.add_argument("--no-label", action="store_true", help="plain black boxes without text")
     parser.add_argument(
         "--no-scrub", action="store_true", help="keep links, attachments, scripts and hidden text"
@@ -88,7 +97,10 @@ def _configure_redact(parser: argparse.ArgumentParser) -> None:
 def _configure_verify(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("input", type=Path, help="PDF file to check")
     _add_match_args(parser)
-    parser.add_argument("--label", default=DEFAULT_LABEL, help="label used during redaction")
+    parser.add_argument(
+        "--label", default=DEFAULT_LABEL,
+        help=f"label used during redaction, if not {DEFAULT_LABEL} (ignored like {_KIND_LABELS})",
+    )  # fmt: skip
 
 
 def _configure_apply_boxes(parser: argparse.ArgumentParser) -> None:
@@ -254,7 +266,7 @@ def _cmd_redact(args: argparse.Namespace) -> int:
             src, dst, terms, args.regex,
             emails=args.emails, email_domains=args.email_domains,
             email_names=args.email_names,
-            label=label, scrub=not args.no_scrub,
+            label=label, kind_labels=not args.single_label, scrub=not args.no_scrub,
             keep_annotations=args.keep_annotations,
         )  # fmt: skip
         _print_report(report)

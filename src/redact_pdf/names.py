@@ -26,7 +26,7 @@ import unicodedata
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 
-from redact_pdf.matching import EMAIL_PATTERN, Matcher, term_matcher, whole_word
+from redact_pdf.matching import EMAIL_PATTERN, NAME, Matcher, term_matcher, whole_word
 
 __all__ = ["NAME_STOPWORDS", "NameTerms", "display_names", "email_name_terms", "loose_matcher"]
 
@@ -124,7 +124,7 @@ def loose_matcher(name: str) -> Matcher:
     """
     name = name.lower()
     body = r"\s+".join(_loose_word(word) for word in name.split())
-    return Matcher(re.compile(whole_word(body), re.IGNORECASE), name, _single_word(name))
+    return Matcher(re.compile(whole_word(body), re.IGNORECASE), name, _single_word(name), NAME)
 
 
 def _loose_word(word: str) -> str:
@@ -229,7 +229,7 @@ def _single_word(name: str) -> bool:
 
 def _name_matcher(name: str) -> Matcher:
     m = term_matcher(name, whole_word_only=True)
-    return Matcher(m.pattern, m.key, _single_word(name))
+    return Matcher(m.pattern, m.key, _single_word(name), NAME)
 
 
 def _local_words(address: str) -> list[str]:

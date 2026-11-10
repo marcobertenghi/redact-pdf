@@ -88,7 +88,7 @@ def test_bookmark_titles_are_redacted(tmp_path: Path) -> None:
     report = redact_pdf(src, out, ["Jane Doe"])
     with pymupdf.open(out) as doc:
         titles = [t[1] for t in doc.get_toc()]
-    assert titles == ["Letter to REDACTED", "Contact: REDACTED"]
+    assert titles == ["Letter to REDACTED", "Contact: EMAIL"]
     assert report.bookmarks == 2
 
 

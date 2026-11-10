@@ -8,7 +8,7 @@ import pymupdf
 import pytest
 
 from redact_pdf import redact_pdf, verify_pdf
-from redact_pdf.matching import email_domain_term, redact_text, term_matcher
+from redact_pdf.matching import TERM, email_domain_term, redact_text, term_matcher
 from tests.conftest import page_text
 
 
@@ -139,7 +139,7 @@ def test_overlapping_matches_are_counted_once(tmp_path: Path) -> None:
 
 def test_redact_text_does_not_nest_labels() -> None:
     matchers = [term_matcher("act"), term_matcher("Smith")]
-    text, counts = redact_text("Smith: REDACTED act", matchers, "REDACTED")
+    text, counts = redact_text("Smith: REDACTED act", matchers, {TERM: "REDACTED"})
     assert text == "REDACTED: REDACTED REDACTED"
     assert counts == {"Smith": 1, "act": 1}
 

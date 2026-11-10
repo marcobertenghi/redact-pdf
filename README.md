@@ -18,6 +18,7 @@ Matched text is deleted from the file and replaced with labelled black boxes. Th
 
 - **Finds text:** whole-word terms, term files and regular expressions, including matches across line breaks and hyphenation.
 - **Removes emails by default:** also finds organisation and person names associated with those addresses, with a report to review.
+- **Says what it removed:** boxes are labelled `EMAIL`, `NAME` or `ORG` for what the tool found itself, and `REDACTED` for your own terms.
 - **Cleans beyond the page:** metadata, bookmarks, links, alternate text, cropped-off image areas, and text that is invisible or lies outside the visible page.
 - **Finishes manual redactions:** turns Firefox highlights and pen blots into real redactions, without rasterizing the pages.
 - **Handles larger jobs:** batch-process folders, remove page ranges, and verify the result.
